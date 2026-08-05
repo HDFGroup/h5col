@@ -1,0 +1,22 @@
+# pixi
+.pixi/
+*.egg-info/
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+build/
+dist/
+
+# HDF5 artifacts from tests / scratch
+*.h5
+*.hdf5
+
+# Editor / OS
+.DS_Store
+
+# Sphinx build output
+docs/_build/

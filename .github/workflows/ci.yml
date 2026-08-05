@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two platforms the pixi lockfile pins: linux-64 and osx-arm64.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          environments: dev
+          cache: true
+
+      - name: Tests
+        run: pixi run -e dev test
+
+      - name: Lint
+        run: pixi run -e dev lint
+
+      - name: Format check
+        run: pixi run -e dev format-check
+
+      - name: Type check
+        run: pixi run -e dev typecheck

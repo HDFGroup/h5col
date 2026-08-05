@@ -1,0 +1,14 @@
+{% extends "!layout.html" %}
+
+{# Icons and link-preview metadata the theme does not emit itself. #}
+{% block extrahead %}
+  {{ super() }}
+  <link rel="apple-touch-icon" sizes="180x180"
+        href="{{ pathto('_static/logo/apple-touch-icon.png', 1) }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="h5col">
+  <meta property="og:title" content="{{ title|striptags|e if title else 'h5col' }}">
+  <meta property="og:description" content="The reference implementation of H5Col (HEP001): column-oriented tabular data in HDF5.">
+  <meta property="og:image" content="{{ baseurl }}_static/logo/social-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+{% endblock %}

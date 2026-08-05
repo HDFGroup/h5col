@@ -1,0 +1,134 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "h5col"
+version = "0.1.0"
+description = "Reference implementation of the H5Col convention (HEP001): column-oriented tabular data in HDF5."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Aleksandar Jelenak", email = "ajelenak@hdfgroup.org" }]
+keywords = ["HDF5", "columnar", "tabular", "dataframe", "H5Col", "HEP001", "h5py"]
+dependencies = [
+    "h5py>=3.11",
+    "numpy>=1.26",
+    "hdf5plugin>=4.0",
+    "pydantic>=2.5",
+]
+
+[project.urls]
+Documentation = "https://hdfgroup.github.io/h5col/"
+Repository = "https://github.com/HDFGroup/h5col"
+Changelog = "https://github.com/HDFGroup/h5col/blob/main/CHANGELOG.md"
+"H5Col convention (HEP001)" = "https://hdfalliance.github.io/heps/hep001/"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/h5col"]
+
+# --------------------------------------------------------------------------- #
+# pixi environment management
+# --------------------------------------------------------------------------- #
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.11"
+# h5py built against HDF5 >= 1.14 (HDF5 >= 1.12 is required for H5T_STD_REF).
+h5py = ">=3.11"
+hdf5 = ">=1.14"
+numpy = ">=1.26"
+hdf5plugin = ">=4.0"
+pydantic = ">=2.5"
+
+[tool.pixi.pypi-dependencies]
+h5col = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.dependencies]
+pytest = ">=8"
+ruff = ">=0.6"
+mypy = ">=1.10"
+
+# Tooling for the example notebooks under `examples/` (kept out of the lean
+# test/lint `dev` environment).
+[tool.pixi.feature.examples.dependencies]
+jupyterlab = ">=4"
+ipykernel = ">=6"
+nbconvert = ">=7"
+nbclient = ">=0.9"
+pandas = ">=2"
+pyarrow = ">=15"
+
+# Tooling for the Sphinx documentation site under `docs/`.
+[tool.pixi.feature.docs.dependencies]
+sphinx = ">=8"
+myst-nb = ">=1.2"
+pydata-sphinx-theme = ">=0.16"
+sphinx-copybutton = ">=0.5"
+sphinx-autobuild = ">=2024"
+
+# Defined on the feature so `pixi run docs` selects the docs environment.
+[tool.pixi.feature.docs.tasks]
+docs = "sphinx-build -W --keep-going -b html docs docs/_build/html"
+docs-live = "sphinx-autobuild docs docs/_build/html"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+examples = { features = ["examples"], solve-group = "default" }
+docs = { features = ["docs"], solve-group = "default" }
+
+[tool.pixi.tasks]
+test = "pytest"
+lint = "ruff check src tests"
+format = "ruff format src tests"
+format-check = "ruff format --check src tests"
+typecheck = "mypy src"
+
+# --------------------------------------------------------------------------- #
+# tooling
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "N", "D"]
+# D105 (magic methods) and D107 (__init__) are documented at the class level,
+# not per-method; the numpy convention already exempts D107.
+# D401 (imperative mood) is not enforced: properties and predicate helpers are
+# deliberately documented as noun phrases ("The table's GENERATION", "True if
+# ...") while action methods use imperative mood, a distinction D401 can't make.
+ignore = ["D105", "D401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# Deflate/Shuffle/Fletcher32 are capitalized to mirror hdf5plugin's class-style
+# filter API (Zstd, Blosc2, ...), so they read uniformly in a pipeline.
+"src/h5col/filters.py" = ["N802"]
+# Tests document themselves through descriptive names, not docstrings.
+"tests/**" = ["D"]
+
+[tool.mypy]
+# 3.12 (not our 3.11 floor): NumPy's bundled stubs use 3.12+ `type` statements,
+# which mypy cannot parse under an older target. Our code stays 3.11-compatible
+# (ruff target-version = py311 guards that).
+python_version = "3.12"
+strict = true
+# h5py is untyped and numpy's generics are noisy in interop code; keep the rest
+# of strict but silence these two so real type errors are not buried.
+warn_return_any = false
+disallow_any_generics = false
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["h5py.*", "hdf5plugin.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

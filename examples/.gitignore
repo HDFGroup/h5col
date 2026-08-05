@@ -1,0 +1,6 @@
+# Downloaded full-scale TLC data (see taxi/fetch.py). Not committed; the
+# committed offline sample lives in taxi/data/.
+taxi/cache/
+
+# H5Col files built by the notebook / build.py.
+*.h5

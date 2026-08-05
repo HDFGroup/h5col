@@ -1,0 +1,572 @@
+/* ==========================================================================
+   h5col documentation — typography and palette
+   --------------------------------------------------------------------------
+   Self-hosted IBM Plex Sans / IBM Plex Mono (SIL OFL 1.1, see fonts/OFL.txt)
+   over pydata-sphinx-theme, with a deep-teal accent on a warm graphite
+   neutral. Everything below is layered on the theme's own CSS variables, so
+   the theme keeps owning layout and this file owns how it reads.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Faces
+   -------------------------------------------------------------------------- */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
+}
+
+/* --------------------------------------------------------------------------
+   2. Tokens
+   -------------------------------------------------------------------------- */
+html {
+  --pst-font-family-base: "IBM Plex Sans", var(--pst-font-family-base-system);
+  --pst-font-family-heading: "IBM Plex Sans", var(--pst-font-family-base-system);
+  --pst-font-family-monospace: "IBM Plex Mono", var(--pst-font-family-monospace-system);
+
+  --pst-font-size-base: 16px;
+  --pst-font-weight-heading: 600;
+
+  /* Modular scale, ~1.22. Sphinx wants px here, not rem. */
+  --pst-font-size-h1: 40px;
+  --pst-font-size-h2: 30px;
+  --pst-font-size-h3: 24px;
+  --pst-font-size-h4: 20px;
+  --pst-font-size-h5: 17px;
+  --pst-font-size-h6: 15px;
+
+  /* Measure: long prose lines are the fastest way to make docs feel cheap. */
+  --h5col-measure: 74ch;
+  --h5col-radius: 6px;
+}
+
+/* Light — warm graphite text, deep teal accent. */
+html[data-theme="light"] {
+  --pst-color-primary: #0f6e72;
+  --pst-color-primary-highlight: #0a5155;
+  --pst-color-secondary: #9a5a2b;
+  --pst-color-secondary-highlight: #7c4620;
+  --pst-color-link: #0f6e72;
+  --pst-color-link-hover: #0a5155;
+
+  --pst-color-text-base: #1f2529;
+  --pst-color-text-muted: #5b666e;
+  --pst-color-heading-color: #12181c;
+
+  --pst-color-background: #ffffff;
+  --pst-color-on-background: #ffffff;
+  --pst-color-surface: #f4f6f6;
+  --pst-color-on-surface: #1f2529;
+  --pst-color-border: #dde3e4;
+  --pst-color-shadow: rgba(15, 110, 114, 0.07);
+
+  --pst-color-inline-code: #0a5155;
+  --pst-color-inline-code-links: #0f6e72;
+  --pst-color-target: #fdf3e3;
+
+  --h5col-code-bg: #f7f9f9;
+  --h5col-rule: #e5eaeb;
+  --h5col-selection: rgba(15, 110, 114, 0.16);
+}
+
+/* Dark — a cool near-black rather than pure black, teal lifted and slightly
+   desaturated so it does not vibrate against the dark ground. */
+html[data-theme="dark"] {
+  --pst-color-primary: #5ec7c9;
+  --pst-color-primary-highlight: #8adcdd;
+  --pst-color-secondary: #d9a06a;
+  --pst-color-secondary-highlight: #eab98a;
+  --pst-color-link: #5ec7c9;
+  --pst-color-link-hover: #8adcdd;
+
+  --pst-color-text-base: #d3dadd;
+  --pst-color-text-muted: #93a1a7;
+  --pst-color-heading-color: #eef3f4;
+
+  --pst-color-background: #12171a;
+  --pst-color-on-background: #171d21;
+  --pst-color-surface: #1b2226;
+  --pst-color-on-surface: #d3dadd;
+  --pst-color-border: #2b353a;
+  --pst-color-shadow: rgba(0, 0, 0, 0.45);
+
+  --pst-color-inline-code: #7fd4d5;
+  --pst-color-inline-code-links: #5ec7c9;
+  --pst-color-target: #33302a;
+
+  --h5col-code-bg: #171e21;
+  --h5col-rule: #263035;
+  --h5col-selection: rgba(94, 199, 201, 0.22);
+}
+
+/* --------------------------------------------------------------------------
+   3. Body text
+   -------------------------------------------------------------------------- */
+body {
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--h5col-selection);
+}
+
+.bd-article-container p,
+.bd-article-container li,
+.bd-article-container dd {
+  line-height: 1.68;
+}
+
+/* Hold running prose to a comfortable measure. Matching only the direct
+   children of a section leaves tables, code blocks, figures, and admonitions
+   free to use the full column, which is what they want. */
+.bd-article section > p,
+.bd-article section > ul,
+.bd-article section > ol,
+.bd-article section > blockquote {
+  max-width: var(--h5col-measure);
+}
+
+/* --------------------------------------------------------------------------
+   4. Headings
+   -------------------------------------------------------------------------- */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--pst-font-family-heading);
+  color: var(--pst-color-heading-color);
+  line-height: 1.22;
+}
+
+/* Large type needs negative tracking; small type needs none. */
+h1 {
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin-bottom: 1.1rem;
+}
+
+h2 {
+  font-weight: 600;
+  letter-spacing: -0.014em;
+  margin-top: 2.6rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--h5col-rule);
+}
+
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  margin-top: 2rem;
+}
+
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* The theme's heading anchor: keep it quiet until the heading is hovered. */
+a.headerlink {
+  color: var(--pst-color-primary);
+  opacity: 0;
+  transition: opacity 120ms ease-in-out;
+}
+:hover > a.headerlink {
+  opacity: 0.65;
+}
+a.headerlink:hover {
+  opacity: 1;
+  text-decoration: none;
+}
+
+/* --------------------------------------------------------------------------
+   5. Links — a thin, offset underline that thickens on hover
+   -------------------------------------------------------------------------- */
+.bd-article-container a:not(.headerlink):not(.btn):not(.toc-item a) {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-color: var(--pst-color-border); /* fallback: no color-mix() */
+  text-decoration-color: color-mix(in srgb, var(--pst-color-link) 38%, transparent);
+  transition: text-decoration-color 120ms ease-in-out, color 120ms ease-in-out;
+}
+
+.bd-article-container a:not(.headerlink):not(.btn):hover {
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--pst-color-link-hover);
+}
+
+/* Navigation and tables of contents read as chrome, not prose: no underlines. */
+.bd-sidebar a,
+.bd-toc a,
+.navbar a,
+nav a {
+  text-decoration: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   6. Code
+   -------------------------------------------------------------------------- */
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--pst-font-family-monospace);
+  font-feature-settings: "kern" 1, "calt" 0, "liga" 0; /* no code ligatures */
+}
+
+/* Inline code: a tinted chip, no border, optically matched to the text size. */
+.bd-article-container code.literal,
+.bd-article-container code.docutils {
+  font-size: 0.875em;
+  padding: 0.1em 0.3em;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--h5col-code-bg); /* fallback: no color-mix() */
+  background-color: color-mix(in srgb, var(--pst-color-primary) 9%, transparent);
+  color: var(--pst-color-inline-code);
+}
+
+html[data-theme="dark"] .bd-article-container code.literal,
+html[data-theme="dark"] .bd-article-container code.docutils {
+  background-color: color-mix(in srgb, var(--pst-color-primary) 14%, transparent);
+}
+
+/* Blocks: hairline frame, generous padding, calm ground. */
+div.highlight,
+div.literal-block-wrapper,
+.cell_input div.highlight {
+  border: 1px solid var(--h5col-rule);
+  border-radius: var(--h5col-radius);
+  background-color: var(--h5col-code-bg);
+  overflow: hidden;
+}
+
+div.highlight pre {
+  padding: 0.95rem 1.1rem;
+  font-size: 0.875em;
+  line-height: 1.6;
+  background-color: transparent;
+}
+
+/* Signatures in the API reference: the most-read lines on those pages. */
+dl.py > dt.sig {
+  background-color: var(--h5col-code-bg);
+  border: 1px solid var(--h5col-rule);
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: var(--h5col-radius);
+  padding: 0.55rem 0.85rem;
+  font-size: 0.94em;
+}
+
+dl.py > dt.sig .sig-name {
+  font-weight: 600;
+  color: var(--pst-color-heading-color);
+}
+
+dl.py > dt.sig .sig-param {
+  font-style: normal;
+}
+
+/* Copy button: invisible until the block is hovered. */
+button.copybtn {
+  opacity: 0;
+  transition: opacity 120ms ease-in-out;
+}
+div.highlight:hover button.copybtn,
+button.copybtn:focus-visible {
+  opacity: 0.75;
+}
+button.copybtn:hover {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   7. Tables — hairline rules, no zebra, lining figures aligned by digit
+   -------------------------------------------------------------------------- */
+.bd-article-container table.docutils,
+.bd-article-container table.table {
+  font-size: 0.94em;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-article-container table.docutils thead th,
+.bd-article-container table.table thead th {
+  font-weight: 600;
+  font-size: 0.86em;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--pst-color-text-muted);
+  background: transparent;
+  border-bottom: 1.5px solid var(--pst-color-border);
+  padding: 0.5rem 0.7rem;
+}
+
+.bd-article-container table.docutils tbody tr,
+.bd-article-container table.table tbody tr {
+  background: transparent !important;
+  border-bottom: 1px solid var(--h5col-rule);
+}
+
+.bd-article-container table.docutils tbody td,
+.bd-article-container table.table tbody td {
+  padding: 0.5rem 0.7rem;
+}
+
+/* --------------------------------------------------------------------------
+   8. Admonitions — a single accent rule instead of a coloured slab
+   -------------------------------------------------------------------------- */
+.bd-article-container .admonition,
+.bd-article-container div.admonition {
+  border: 1px solid var(--h5col-rule);
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: var(--h5col-radius);
+  box-shadow: none;
+  background-color: var(--h5col-code-bg);
+}
+
+.bd-article-container .admonition > .admonition-title {
+  background-color: transparent;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.bd-article-container .admonition > .admonition-title::after {
+  color: var(--pst-color-primary);
+}
+
+/* Definition lists (the glossary-style blocks in the guide). */
+.bd-article-container dl.simple dt,
+.bd-article-container dl.field-list > dt {
+  font-weight: 600;
+  color: var(--pst-color-heading-color);
+}
+
+/* --------------------------------------------------------------------------
+   9. Chrome: navbar, sidebars, footer
+   -------------------------------------------------------------------------- */
+.navbar-brand .title,
+.navbar-brand p {
+  font-weight: 600;
+  font-size: 1.12rem;
+  letter-spacing: -0.01em;
+}
+
+/* The mark sits beside the wordmark; cap its height so it aligns to the text
+   rather than driving the navbar's height. */
+.navbar-brand img,
+.navbar-brand .logo__image {
+  height: 2.1rem;
+  width: auto;
+  margin-right: 0.5rem;
+}
+
+/* The lockup on the landing page. The width is set on the image rather than
+   the container, whose max-width the theme already controls. */
+.bd-article .h5col-hero {
+  margin: 0.5rem auto 2.4rem;
+  text-align: center;
+}
+
+.bd-article .h5col-hero img {
+  width: min(440px, 100%);
+  height: auto;
+}
+
+.bd-header {
+  box-shadow: 0 1px 0 var(--pst-color-border);
+  backdrop-filter: saturate(1.4) blur(6px);
+}
+
+.bd-header .navbar-nav > li > a.nav-link {
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.bd-header .navbar-nav > li > a.nav-link:hover,
+.bd-header .navbar-nav > li.current > a.nav-link {
+  color: var(--pst-color-primary);
+}
+
+/* Section navigation: quieter labels, a solid accent rail on the current page. */
+.bd-sidebar-primary {
+  font-size: 0.92rem;
+  border-right: 1px solid var(--pst-color-border);
+}
+
+.bd-sidebar-primary .caption-text,
+.bd-sidebar-secondary .onthispage {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--pst-color-text-muted);
+}
+
+nav.bd-links li > a:hover {
+  color: var(--pst-color-primary);
+}
+
+nav.bd-links .current > a {
+  font-weight: 600;
+  color: var(--pst-color-primary);
+  box-shadow: inset 2px 0 0 var(--pst-color-primary);
+}
+
+.bd-sidebar-secondary {
+  font-size: 0.88rem;
+}
+
+.bd-footer {
+  border-top: 1px solid var(--pst-color-border);
+  font-size: 0.88rem;
+  color: var(--pst-color-text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   10. Notebooks (myst-nb) — outputs read as results, not as source
+   -------------------------------------------------------------------------- */
+
+/* myst-nb marks input cells with a hard-coded green rail over a fixed light
+   grey, neither of which follows the palette or the dark scheme. Recolour the
+   rail to the accent and hand the ground back to the shared code token. */
+.bd-article div.cell > div.cell_input {
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: var(--h5col-radius);
+  background-color: var(--h5col-code-bg);
+}
+
+/* The rail is the cell's left edge, so the inner block must not draw its own. */
+.bd-article div.cell_input div.highlight {
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.cell_output {
+  font-size: 0.9em;
+}
+
+.cell_output pre {
+  border-left: 2px solid var(--pst-color-border);
+  background-color: transparent;
+  padding-left: 0.9rem;
+  color: var(--pst-color-text-muted);
+}
+
+.cell_output table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   10b. Funding acknowledgment
+   --------------------------------------------------------------------------
+   Deliberately not an admonition: this is attribution, not something the
+   reader must act on, so a coloured callout would mislabel it and compete
+   with the guide's real notes. A rule and a small accent label give it
+   standing without raising its voice.
+   -------------------------------------------------------------------------- */
+.bd-article .h5col-funding {
+  margin-top: 3rem;
+  padding-top: 1.15rem;
+  border-top: 1px solid var(--h5col-rule);
+  max-width: var(--h5col-measure);
+}
+
+.bd-article .h5col-funding p {
+  margin-bottom: 0;
+  font-size: 0.94rem;
+  line-height: 1.6;
+  color: var(--pst-color-text-muted);
+}
+
+.bd-article .h5col-funding p:first-child {
+  margin-bottom: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--pst-color-primary);
+}
+
+/* --------------------------------------------------------------------------
+   11. Accessibility and motion
+   -------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   12. Narrow screens
+   -------------------------------------------------------------------------- */
+@media (max-width: 720px) {
+  html {
+    --pst-font-size-h1: 32px;
+    --pst-font-size-h2: 25px;
+    --pst-font-size-h3: 21px;
+  }
+
+  div.highlight pre {
+    padding: 0.8rem 0.85rem;
+    font-size: 0.82em;
+  }
+}
