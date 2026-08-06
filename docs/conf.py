@@ -75,9 +75,12 @@ html_context = {"baseurl": html_baseurl}
 html_last_updated_fmt = "%Y-%m-%d"
 html_theme_options = {
     "github_url": "https://github.com/HDFGroup/h5col",
+    # Just the identifier: the theme appends an external-link glyph, so the
+    # off-site jump is already signalled, and the landing page introduces
+    # HEP001 by its full title.
     "external_links": [
         {
-            "name": "HEP001 (the convention)",
+            "name": "HEP001",
             "url": "https://hdfalliance.github.io/heps/hep001/",
         },
     ],

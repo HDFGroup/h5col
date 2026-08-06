@@ -11,20 +11,20 @@
 
 # h5col
 
-`h5col` stores column-oriented tables natively in HDF5 files. A table is an ordinary
-HDF5 group. Each scalar column in it is an ordinary rank-1 HDF5 dataset. A
-variable-length list column is a small group of such HDF5 datasets. On top
-of that deliberately simple layout, the H5Col convention specifies the things a
-real tabular workload needs: a committed row count, per-column chunking and
-compression, fixed-length strings that never truncate silently, boolean and
+`h5col` stores column-oriented tables natively in HDF5 files. A table is an
+ordinary HDF5 group. Each scalar column in it is an ordinary rank-1 HDF5
+dataset. A variable-length list column is a small group of such HDF5 datasets.
+On top of that deliberately simple layout, the H5Col convention specifies the
+things a real tabular workload needs: a committed row count, per-column chunking
+and compression, fixed-length strings that never truncate silently, boolean and
 categorical columns, precise missing-value semantics, variable-length list
 columns, and persistent search indexes that accelerate row selection.
 
 The convention is an HDF5 Enhancement Proposal: [HEP001 — H5Col: Column-Oriented
 Tabular Data in HDF5](https://hdfalliance.github.io/heps/hep001/). This package,
 `h5col`, built on [h5py](https://docs.h5py.org/en/stable/), is its first
-experimental implementation. It supports writing and reading the convention's tables, and
-adds a small pyarrow-style query API on top:
+experimental implementation. It supports writing and reading the convention's
+tables, and adds a small pyarrow-style query API on top:
 
 ```python
 import h5py
@@ -45,7 +45,7 @@ with h5py.File("observations.h5", "w") as f:
 
 A file written this way needs nothing beyond HDF5 to be read. Every column is a
 plain dataset that h5py, `h5dump`, HDFView, or any other HDF5 tool can open,
-whether or not this package is installed; the convention's extra meaning is
+whether or not this package is installed. The convention's extra meaning is
 carried in attributes that convention-aware readers understand and other
 readers simply ignore.
 
@@ -62,7 +62,9 @@ readers simply ignore.
   real-data walkthrough with New York City taxi trips.
 - The [API reference](api/index.md) documents every public name in the
   package.
-- Adherence of this package to the H5Col (HEP001) specification is documented in the [conformance page](about/conformance.md).
+- Adherence of this package to the H5Col (HEP001) specification is documented in
+  the [conformance page](about/conformance.md).
+- The package's license is [here](about/license.md).
 
 :::{container} h5col-funding
 Funding
