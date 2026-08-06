@@ -7,6 +7,15 @@
   </picture>
 </p>
 
+<p align="center">
+  <a href="https://github.com/HDFGroup/h5col/actions/workflows/ci.yml"><img
+     src="https://github.com/HDFGroup/h5col/actions/workflows/ci.yml/badge.svg?branch=main"
+     alt="CI: tests, lint, format, and type checks on Linux, macOS, and Windows"></a>
+  <a href="https://github.com/HDFGroup/h5col/actions/workflows/docs.yml"><img
+     src="https://github.com/HDFGroup/h5col/actions/workflows/docs.yml/badge.svg?branch=main"
+     alt="Docs: documentation site build and GitHub Pages deployment"></a>
+</p>
+
 # h5col
 
 A reference implementation and proof-of-concept for **H5Col — Column-Oriented
@@ -17,8 +26,7 @@ per-column filter pipelines, and query-accelerating search indexes — with a
 small pyarrow-style predicate API for selecting rows.
 
 The convention (proposal id HEP001) is specified at
-https://hdfalliance.github.io/heps/hep001/; `h5col`'s intentional
-departures from it are listed in [`design/DEVIATIONS.md`](design/DEVIATIONS.md).
+https://hdfalliance.github.io/heps/hep001/.
 
 Opening HDF5 files is a standard `h5py` operation and is intentionally left
 outside `h5col`, so every storage option (drivers, cloud-optimized settings, etc.)
@@ -34,11 +42,6 @@ remains available to callers.
 - Python ≥ 3.11
 - `h5py` ≥ 3.11, built against **HDF5 ≥ 1.14** (the version this project pins)
 - `numpy` ≥ 1.26, `pydantic` ≥ 2.5, `hdf5plugin` ≥ 4.0
-
-The convention mandates the unified `H5T_STD_REF` object-reference datatype
-(introduced in HDF5 1.12); `h5col` currently deviates and writes the older,
-universally portable `H5T_STD_REF_OBJ`, because h5py cannot yet create
-`H5T_STD_REF` — see [`design/DEVIATIONS.md`](design/DEVIATIONS.md).
 
 ## Installation (from the repository)
 
@@ -78,7 +81,7 @@ pip install .                    # from the repository root
 
 ## pixi environments
 
-Three environments are defined (all in one solve group, so they share a
+Four environments are defined (all in one solve group, so they share a
 consistent dependency set):
 
 | Environment | Adds | Use it for |
