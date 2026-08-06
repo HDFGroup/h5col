@@ -36,8 +36,8 @@ to follow [Semantic Versioning](https://semver.org/).
   landing page, the favicon and Apple touch icon, and the `og:image` used for
   link previews.
 - GitHub workflows: `ci.yml` runs the gate (tests, lint, format check, type
-  check) on Linux and macOS; `docs.yml` builds the documentation on every
-  push and pull request and deploys it to GitHub Pages from `main`.
+  check) on Linux, macOS, and Windows; `docs.yml` builds the documentation on
+  every push and pull request and deploys it to GitHub Pages from `main`.
 - `Column.read_rows(rows)` reads just the given rows, decoded, using
   coalesced chunk-aligned block reads. Rows may be in any order and may
   repeat.

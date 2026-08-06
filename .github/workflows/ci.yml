@@ -16,8 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The two platforms the pixi lockfile pins: linux-64 and osx-arm64.
-        os: [ubuntu-latest, macos-latest]
+        # The three platforms the pixi lockfile pins: linux-64, osx-arm64,
+        # and win-64.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
