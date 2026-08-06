@@ -1,16 +1,39 @@
 name: Docs
 
+# Only the inputs the site is actually built from. Anything else — tests,
+# design notes, the CI workflow, the README — cannot change a rendered page,
+# so it should not spend a build or a deployment. `workflow_dispatch` stays as
+# the escape hatch for rebuilding without touching any of these.
+# (GitHub Actions does not support YAML anchors, hence the repeated list.)
 on:
   push:
     branches: [main]
+    paths:
+      - docs/**
+      - src/h5col/**              # autodoc renders these docstrings
+      - examples/*.ipynb          # rendered via the docs/notebooks symlink
+      - CHANGELOG.md              # {include} in docs/about/changelog.md
+      - LICENSE                   # {literalinclude} in docs/about/license.md
+      - pyproject.toml            # the docs environment and the `docs` task
+      - pixi.lock                 # pins the docs toolchain
+      - .github/workflows/docs.yml
   pull_request:
+    paths:
+      - docs/**
+      - src/h5col/**
+      - examples/*.ipynb
+      - CHANGELOG.md
+      - LICENSE
+      - pyproject.toml
+      - pixi.lock
+      - .github/workflows/docs.yml
   workflow_dispatch:
 
-# Deployments to the github-pages environment must finish, not cancel; PR
-# builds still get their own per-ref group.
+# Deployments to the github-pages environment must finish, not cancel. Builds
+# on any other ref are just validation, so a newer push supersedes them.
 concurrency:
   group: docs-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
