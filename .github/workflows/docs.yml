@@ -19,7 +19,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: prefix-dev/setup-pixi@v0.10.0
         with:
@@ -32,9 +32,12 @@ jobs:
       - name: Keep GitHub Pages from running Jekyll
         run: touch docs/_build/html/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
+          # From v4 on, this action drops dotfiles from the archive unless
+          # asked to keep them, which would silently discard `.nojekyll`.
+          include-hidden-files: true
 
   # Publishing requires one manual repository setting:
   # Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
@@ -51,4 +54,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
