@@ -17,8 +17,8 @@ dataset. A variable-length list column is a small group of such HDF5 datasets.
 On top of that deliberately simple layout, the H5Col convention specifies the
 things a real tabular workload needs: a committed row count, per-column chunking
 and compression, fixed-length strings that never truncate silently, boolean and
-categorical columns, precise missing-value semantics, variable-length list
-columns, and persistent search indexes that accelerate row selection.
+categorical columns, precise missing-value semantics, and persistent search
+indexes that accelerate row selection.
 
 The convention is an HDF5 Enhancement Proposal: [HEP001 — H5Col: Column-Oriented
 Tabular Data in HDF5](https://hdfalliance.github.io/heps/hep001/). This package,

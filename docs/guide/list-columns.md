@@ -10,7 +10,7 @@ A list column is a group (a direct child of the table group) with
 `CLASS = "LIST_COLUMN"` and `KIND = "OFFSETS"` attributes. Its storage follows the same
 offsets encoding used by Arrow's list arrays: all elements are stored
 back-to-back in a values member, and a `uint64` `OFFSETS` dataset marks the
-boundaries:row `i`'s elements are `VALUES[OFFSETS[i]:OFFSETS[i+1]]`, with
+boundaries: row `i`'s elements are `VALUES[OFFSETS[i]:OFFSETS[i+1]]`, with
 `OFFSETS[0] = 0` and the offsets non-decreasing. A nullable list column adds
 a `MASK` dataset that records which rows are null.
 
