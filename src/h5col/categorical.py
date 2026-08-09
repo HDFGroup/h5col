@@ -21,6 +21,7 @@ import numpy.typing as npt
 
 from . import references
 from .exceptions import ConformanceError, SchemaError
+from .missing import masked_to_none
 from .reserved import ATTR_CATEGORIES, ATTR_ORDERED
 from .strings import FixedString
 
@@ -120,7 +121,10 @@ def encode_labels(table_group: Any, code_dataset: Any, values: Any) -> npt.NDArr
     labels = load_category_labels(table_group, code_dataset)
     index = {lab: i for i, lab in enumerate(labels)}
     fill = user_fill_code(code_dataset)
-    vals = list(values)
+    # A masked element means the same as None here; normalize so one path
+    # handles both (a MaskedConstant is unhashable and would blow up the
+    # category lookup below).
+    vals = list(masked_to_none(values))
     codes = np.empty(len(vals), dtype=code_dataset.dtype)
     for i, v in enumerate(vals):
         if v is None:

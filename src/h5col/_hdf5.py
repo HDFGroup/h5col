@@ -16,6 +16,7 @@ from h5py import h5d, h5p, h5s, h5t
 from .booleans import encode_bool, is_bool_dtype
 from .exceptions import SchemaError
 from .filters import FilterPipeline
+from .missing import masked_to_none
 from .strings import FixedString, ascii_token_dtype
 
 # Default (uncompressed) chunk-size policy. H5Col columns are write-once /
@@ -175,13 +176,16 @@ def gather_rows(dataset: Any, rows: np.ndarray, nrows: int) -> np.ndarray:
 
 
 def substitute_fill_for_none(dataset: Any, values: Any, name: str) -> Any:
-    """Return *values* with every ``None`` replaced by *dataset*'s fill value.
+    """Return *values* with every missing element replaced by *dataset*'s fill value.
 
     H5Col marks a missing row with the column's fill value, so ``None`` in
     append data means "this row is missing" — the same reading list-column
-    leaf elements already give it. A column that cannot represent a missing
-    row (a boolean, which H5Col forbids from declaring a fill, or a foreign
-    column that declares none) rejects ``None`` instead of coercing it.
+    leaf elements already give it. A masked element of a
+    :class:`numpy.ma.MaskedArray` means exactly that too, and is normalized to
+    ``None`` first (see :func:`~h5col.missing.masked_to_none`) so both spellings
+    take one path. A column that cannot represent a missing row (a boolean,
+    which H5Col forbids from declaring a fill, or a foreign column that declares
+    none) rejects them instead of coercing.
 
     Values that cannot hold a ``None`` — anything carrying a non-object dtype,
     such as a typed NumPy array or pandas Series — are returned unchanged, so
@@ -191,8 +195,10 @@ def substitute_fill_for_none(dataset: Any, values: Any, name: str) -> Any:
     Raises
     ------
     SchemaError
-        If *values* holds a ``None`` and the column declares no fill value.
+        If *values* holds a missing element and the column declares no fill
+        value.
     """
+    values = masked_to_none(values)
     kind = getattr(getattr(values, "dtype", None), "kind", None)
     if kind is not None and kind != "O":
         return values

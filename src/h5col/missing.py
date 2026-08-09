@@ -58,6 +58,29 @@ def recommended_fill(dtype: Any) -> Any:
     raise FillValueError(f"no recommended fill value for dtype {np.dtype(dtype)!r}")
 
 
+def masked_to_none(values: Any) -> Any:
+    """Rewrite a 1-D masked array to a list carrying ``None`` where it was masked.
+
+    A masked element and a ``None`` say the same thing on append — this row is
+    missing — so folding one into the other keeps a single missing-value path
+    through every encoder. The payload under a mask is discarded deliberately:
+    ``numpy.ma`` promises nothing about it, and in practice it holds whatever
+    stale arithmetic left behind rather than the column's fill value.
+
+    Anything that is not a 1-D masked array is returned unchanged, and a masked
+    array with nothing masked yields its plain data, so the typed fast paths
+    downstream are left undisturbed.
+    """
+    if not isinstance(values, np.ma.MaskedArray) or values.ndim != 1:
+        return values
+    # getmaskarray, not .mask: the latter is the scalar ``nomask`` when nothing
+    # is masked, which cannot be zipped over.
+    mask = np.ma.getmaskarray(values)
+    if not mask.any():
+        return values.data
+    return [None if m else v for m, v in zip(mask, values.data, strict=True)]
+
+
 def is_missing(values: Any, fill_value: Any) -> npt.NDArray[np.bool_]:
     """Apply the canonical missing-value test element-wise.
 
