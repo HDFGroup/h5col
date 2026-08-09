@@ -41,7 +41,7 @@ remains available to callers.
 
 - Python ≥ 3.11
 - `h5py` ≥ 3.11, built against **HDF5 ≥ 2.1** (the version this project pins)
-- `numpy` ≥ 1.26, `pydantic` ≥ 2.5, `hdf5plugin` ≥ 4.0
+- `numpy` ≥ 2.0 (for `StringDType`), `pydantic` ≥ 2.5, `hdf5plugin` ≥ 4.0
 
 ## Installation (from the repository)
 
@@ -74,7 +74,7 @@ conda-forge and then the package itself with pip:
 
 ```bash
 conda create -n h5col -c conda-forge "python>=3.11" "h5py>=3.11" "hdf5>=2.1" \
-    "numpy>=1.26" "hdf5plugin>=4.0" "pydantic>=2.5"
+    "numpy>=2.0" "hdf5plugin>=4.0" "pydantic>=2.5"
 conda activate h5col
 pip install .                    # from the repository root
 ```

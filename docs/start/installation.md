@@ -9,7 +9,8 @@ pure Python; all of its binary needs are covered by its dependencies.
 
 - Python ≥ 3.11
 - [h5py](https://docs.h5py.org/en/stable/) ≥ 3.11, built against HDF5 ≥ 2.1.0
-- [NumPy](https://numpy.org) ≥ 1.26
+- [NumPy](https://numpy.org) ≥ 2.0 (string columns decode into its
+  `StringDType`)
 - [hdf5plugin](https://pypi.org/project/hdf5plugin/) ≥ 4.0
 - [pydantic](https://docs.pydantic.dev) ≥ 2.5
 
@@ -58,7 +59,7 @@ itself with pip:
 
 ```bash
 conda create -n h5col -c conda-forge "python>=3.11" "h5py>=3.11" "hdf5>=2.1" \
-    "numpy>=1.26" "hdf5plugin>=4.0" "pydantic>=2.5"
+    "numpy>=2.0" "hdf5plugin>=4.0" "pydantic>=2.5"
 conda activate h5col
 pip install git+https://github.com/HDFGroup/h5col.git
 ```

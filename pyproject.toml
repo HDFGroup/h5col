@@ -12,7 +12,8 @@ authors = [{ name = "Aleksandar Jelenak", email = "ajelenak@hdfgroup.org" }]
 keywords = ["HDF5", "columnar", "tabular", "dataframe", "H5Col", "HEP001", "h5py"]
 dependencies = [
     "h5py>=3.11",
-    "numpy>=1.26",
+    # 2.0 for numpy.dtypes.StringDType, the decode target for string columns.
+    "numpy>=2.0",
     "hdf5plugin>=4.0",
     "pydantic>=2.5",
 ]
@@ -39,7 +40,8 @@ python = ">=3.11"
 # release that introduced H5T_STD_REF; this higher floor is a project choice.
 h5py = ">=3.11"
 hdf5 = ">=2.1.0"
-numpy = ">=1.26"
+# 2.0 for numpy.dtypes.StringDType, the decode target for string columns.
+numpy = ">=2.0"
 hdf5plugin = ">=4.0"
 pydantic = ">=2.5"
 
