@@ -21,8 +21,18 @@ from h5col import (
     TableSpec,
     bool_dtype,
 )
+from h5col._hdf5 import (
+    read_str_attr,
+    write_ascii_token_attr,
+    write_uint64_attr,
+)
 from h5col.exceptions import ConformanceError, OversizedStringError, SchemaError
+from h5col.lists import reject_vlen
 from h5col.reserved import (
+    ATTR_CLASS,
+    ATTR_KIND,
+    ATTR_NROWS,
+    ATTR_VERSION,
     CLASS_LIST_COLUMN,
     CLASS_STRING_VALUES,
     MEMBER_CHARS,
@@ -118,8 +128,6 @@ def test_list_string_values_roundtrip(h5file: h5py.File) -> None:
     col = t["tags"]
     assert col.read() == [["red", "green"], ["blue"], []]
     # The VALUES member is a STRING_VALUES group with a uint8 CHARS buffer.
-    from h5col._hdf5 import read_str_attr
-
     sv = col.group[MEMBER_VALUES]
     assert read_str_attr(sv, "CLASS") == CLASS_STRING_VALUES
     assert sv[MEMBER_CHARS].dtype == np.dtype("u1")
@@ -204,8 +212,6 @@ def test_nested_list_of_lists(h5file: h5py.File) -> None:
     # The VALUES member is itself a LIST_COLUMN group.
     inner = t["m"].group[MEMBER_VALUES]
     assert isinstance(inner, h5py.Group)
-    from h5col._hdf5 import read_str_attr
-
     assert read_str_attr(inner, "CLASS") == CLASS_LIST_COLUMN
 
 
@@ -246,8 +252,6 @@ def test_list_vlen_sequence_leaf_rejected(h5file: h5py.File) -> None:
 
 
 def test_reject_vlen_descends_into_compound_and_array() -> None:
-    from h5col.lists import reject_vlen
-
     # Vlen hidden inside a compound field, or under an array subtype, must be
     # caught (rule 11 forbids vlen ANYWHERE below a list column).
     with pytest.raises(SchemaError):
@@ -280,9 +284,6 @@ def test_validate_rejects_externally_built_compound_vlen_leaf(
 ) -> None:
     # Hand-build a structurally valid list column whose leaf VALUES carries a
     # variable-length field, mimicking a non-conformant externally-produced file.
-    from h5col._hdf5 import write_ascii_token_attr, write_uint64_attr
-    from h5col.reserved import ATTR_CLASS, ATTR_KIND, ATTR_NROWS, ATTR_VERSION
-
     g = h5file.create_group("t")
     write_ascii_token_attr(g, ATTR_CLASS, "COLUMN_TABLE")
     write_ascii_token_attr(g, ATTR_VERSION, "1.0")

@@ -18,6 +18,7 @@ from h5col import (
     Table,
     bool_dtype,
 )
+from h5col._hdf5 import write_utf8_attr
 from h5col.exceptions import (
     ConformanceError,
     FillValueError,
@@ -293,8 +294,6 @@ def test_validate_rejects_nonscalar_nrows(h5file: h5py.File) -> None:
 def test_validate_rejects_index_disagreeing_with_underscore_index(
     h5file: h5py.File,
 ) -> None:
-    from h5col._hdf5 import write_utf8_attr
-
     g = h5file.create_group("t")
     t = Table.from_arrays(
         g,

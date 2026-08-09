@@ -25,6 +25,12 @@ from h5col import (
     field,
     query,
 )
+from h5col._hdf5 import write_ascii_token_attr, write_uint64_attr
+from h5col.reserved import (
+    ATTR_ORDERED,
+    ATTR_SEARCH_INDEX_LIST,
+    GROUP_SEARCH_INDEXES,
+)
 from h5col.strings import FixedString
 
 # Base data: 20 rows, several columns, with deliberate missing rows.
@@ -476,8 +482,6 @@ class Test4dReviewRegressions:
 
     def test_malformed_search_index_list_falls_back_to_scan(self, h5file) -> None:
         # A non-1-D SEARCH_INDEX_LIST must not crash the query.
-        from h5col.reserved import ATTR_SEARCH_INDEX_LIST
-
         t = make_table(h5file)
         t.add_search_index("x", "CHUNK_MINMAX")
         ds = t.columns["x"].dataset
@@ -490,9 +494,6 @@ class Test4dReviewRegressions:
     def test_structurally_broken_token_valid_index_falls_back(self, h5file) -> None:
         # A token-valid CHUNK_MINMAX whose datatype is not the expected compound
         # must degrade to a scan, not raise IndexError.
-        from h5col._hdf5 import write_ascii_token_attr, write_uint64_attr
-        from h5col.reserved import ATTR_SEARCH_INDEX_LIST, GROUP_SEARCH_INDEXES
-
         t = make_table(h5file)
         t.add_search_index("x", "CHUNK_MINMAX")
         si = t.group[GROUP_SEARCH_INDEXES]
@@ -511,8 +512,6 @@ class Test4dReviewRegressions:
     def test_explain_not_mislabeled_after_demotion(self, h5file) -> None:
         # A token-valid SORTED_ROWS broken structurally (ordered=false) must not
         # be reported as the method that answered a leaf that fell back to scan.
-        from h5col.reserved import ATTR_ORDERED
-
         t = make_table(h5file)
         t.add_search_index("ok", "BITMAP")
         sr = t.add_search_index("x", "SORTED_ROWS")
