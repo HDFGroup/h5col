@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from h5col import ColumnSpec, Table
+from h5col import ColumnSpec, Table, categorical, references
 from h5col.exceptions import ConformanceError, SchemaError
 
 
@@ -148,3 +148,68 @@ def test_categorical_validate_catches_orphan_categories(h5file: h5py.File) -> No
     g["CATEGORIES"].create_dataset("orphan", data=np.arange(2))
     with pytest.raises(ConformanceError):
         t.validate()
+
+
+# --------------------------------------------------------------------------- #
+# The fill value is the only missing-category marker
+# --------------------------------------------------------------------------- #
+def _fill_less_code_dataset(h5file: h5py.File) -> tuple[h5py.Group, h5py.Dataset]:
+    """A categorical code dataset that declares no fill value.
+
+    Built by hand because h5col's own writer always sets one; the gap only shows
+    up on a file written by another producer.
+    """
+    g = h5file.create_group("t")
+    cat_ds = categorical.create_categories_dataset(
+        g.create_group("CATEGORIES"), "c__CATEGORIES", ["a", "b", "c"]
+    )
+    ds = g.create_dataset("c", data=np.array([0, 1, 2], dtype="i1"))
+    references.write_ref_attr(ds, "CATEGORIES", cat_ds)
+    return g, ds
+
+
+def test_categorical_decode_without_user_fill_keeps_code_zero(
+    h5file: h5py.File,
+) -> None:
+    # h5py reports a library-default fillvalue of 0 for a dataset that declares
+    # none. Read ungated, that turns the *first* category into a missing value.
+    g, ds = _fill_less_code_dataset(h5file)
+    assert ds.fillvalue == 0
+    assert categorical.user_fill_code(ds) is None
+    assert list(categorical.decode_codes(g, ds, ds[...])) == ["a", "b", "c"]
+
+
+def test_categorical_encode_none_without_user_fill_raises(h5file: h5py.File) -> None:
+    g, ds = _fill_less_code_dataset(h5file)
+    with pytest.raises(SchemaError, match="no fill value"):
+        categorical.encode_labels(g, ds, ["a", None])
+
+
+def test_categorical_out_of_range_code_raises(h5file: h5py.File) -> None:
+    # An unindexable code is a malformed file, not another spelling of missing:
+    # decoding it to None would contradict is_missing() and the query layer.
+    g = h5file.create_group("t")
+    t = Table.create(g, [ColumnSpec(name="c", categories=["a", "b", "c"])])
+    t.append({"c": ["a", "b", "c", "a"]})
+    t["c"].dataset[2] = 7
+    with pytest.raises(ConformanceError, match="neither the fill code"):
+        t["c"].read()
+
+
+def test_categorical_out_of_range_code_raises_via_read_rows(h5file: h5py.File) -> None:
+    g = h5file.create_group("t")
+    t = Table.create(g, [ColumnSpec(name="c", categories=["a", "b"])])
+    t.append({"c": ["a", "b", "a", "b"]})
+    t["c"].dataset[3] = 9
+    assert list(t["c"].read_rows([0, 1])) == ["a", "b"]  # untouched rows still read
+    with pytest.raises(ConformanceError, match="categorical code 9"):
+        t["c"].read_rows([1, 3])
+
+
+def test_categorical_read_and_is_missing_never_disagree(h5file: h5py.File) -> None:
+    g = h5file.create_group("t")
+    t = Table.create(g, [ColumnSpec(name="c", categories=["a", "b", "c"])])
+    t.append({"c": ["a", None, "b", None, "c"]})
+    col = t["c"]
+    from_read = np.array([v is None for v in col.read()])
+    np.testing.assert_array_equal(from_read, col.is_missing())
