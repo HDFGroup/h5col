@@ -23,7 +23,7 @@ from . import references
 from .exceptions import ConformanceError, SchemaError
 from .missing import masked_to_none
 from .reserved import ATTR_CATEGORIES, ATTR_ORDERED
-from .strings import FixedString
+from .strings import FixedString, decoded_string_dtype
 
 #: Default fill code for a *signed* categorical column.
 DEFAULT_CATEGORICAL_FILL = -1
@@ -141,10 +141,12 @@ def encode_labels(table_group: Any, code_dataset: Any, values: Any) -> npt.NDArr
     return codes
 
 
-def decode_codes(
-    table_group: Any, code_dataset: Any, codes: Any
-) -> npt.NDArray[np.object_]:
+def decode_codes(table_group: Any, code_dataset: Any, codes: Any) -> npt.NDArray[Any]:
     """Map integer codes to labels; the declared fill code becomes ``None``.
+
+    String labels come back in the nullable form of
+    :func:`~h5col.strings.decoded_string_dtype`; numeric labels keep an object
+    array, being the only container that holds both them and a ``None``.
 
     Raises
     ------
@@ -170,10 +172,20 @@ def decode_codes(
             f"[0, {len(labels)})"
         )
 
-    out = np.full(n, None, dtype=object)
-    present = ~is_fill
-    out[present] = np.asarray(labels, dtype=object)[arr[present]]
-    return out
+    # String labels decode into the compact NumPy string dtype, in its nullable
+    # form because a missing row has no label to carry. Categories may also be
+    # numeric, and those keep an object array — the only container that holds
+    # both the label values and a ``None``.
+    all_str = bool(labels) and all(isinstance(lab, str) for lab in labels)
+    dtype = decoded_string_dtype(nullable=True) if all_str else np.dtype(object)
+
+    # One fancy index over the labels plus a trailing None slot, rather than
+    # allocating the result and then assigning into the present rows: half the
+    # cost, and the fill rows never touch the string machinery twice. Widening
+    # the codes to intp first keeps the sentinel index representable whatever
+    # the code dtype.
+    lab = np.asarray([*labels, None], dtype=dtype)
+    return lab[np.where(is_fill, len(labels), arr.astype(np.intp, copy=False))]
 
 
 def is_ordered(table_group: Any, code_dataset: Any) -> bool | None:

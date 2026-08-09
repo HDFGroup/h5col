@@ -42,6 +42,21 @@ to follow [Semantic Versioning](https://semver.org/).
   coalesced chunk-aligned block reads. Rows may be in any order and may
   repeat.
 
+### Changed
+
+- String and categorical columns now decode into NumPy 2's
+  `numpy.dtypes.StringDType` instead of a `dtype=object` array of Python
+  strings. Categorical columns use its nullable form, since a missing row has
+  no label to carry; categories whose labels are not strings keep an object
+  array. For 400,000 short strings the decoded column costs 6.4 MB rather than
+  25.8 MB of resident memory, and `Column.read` on that column drops from
+  23 ms to 2 ms.
+- `Column.categories` returns a `StringDType` array for string labels.
+- The `S` to `StringDType` cast validates lazily, so a non-conformant producer's
+  invalid UTF-8 now raises `UnicodeDecodeError` when the offending value is read
+  out of the array rather than when the column is read.
+- Minimum NumPy raised to 2.0, which introduced `StringDType`.
+
 ### Known limitations
 
 - `CHUNK_BLOOM` search indexes are deferred.

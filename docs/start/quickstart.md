@@ -94,8 +94,9 @@ table.read(["station", "kind"])
 ```
 
 ```text
-{'station': array(['KBOS', 'KJFK', 'KLGA', 'KDCA'], dtype=object),
- 'kind': array(['manned', 'automatic', 'automatic', None], dtype=object)}
+{'station': array(['KBOS', 'KJFK', 'KLGA', 'KDCA'], dtype=StringDType()),
+ 'kind': array(['manned', 'automatic', 'automatic', None],
+               dtype=StringDType(na_object=None))}
 ```
 
 Individual columns are reached by name. A categorical column also exposes its
@@ -140,7 +141,8 @@ sel.read(["station", "t_air"])
 ```
 
 ```text
-{'station': array(['KJFK', 'KLGA'], dtype=object), 't_air': array([24. , 23.1])}
+{'station': array(['KJFK', 'KLGA'], dtype=StringDType()),
+ 't_air': array([24. , 23.1])}
 ```
 
 A {class}`~h5col.Selection` is lazy — it evaluates once, on first use, and

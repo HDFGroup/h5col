@@ -25,6 +25,24 @@ from .exceptions import OversizedStringError, SchemaError
 _ENCODINGS = ("utf-8", "ascii")
 
 
+def decoded_string_dtype(*, nullable: bool = False) -> np.dtype:
+    """The NumPy dtype H5Col string values decode into.
+
+    ``numpy.dtypes.StringDType`` (NumPy ≥ 2.0) holds real ``str`` values without
+    the per-element Python object a ``dtype=object`` array needs, and still
+    supports ``==``, ``sort``, ``unique`` and fancy indexing elementwise.
+
+    Parameters
+    ----------
+    nullable:
+        When True the dtype also accepts ``None``, for categorical columns whose
+        missing rows have no label to decode to.
+    """
+    if nullable:
+        return np.dtypes.StringDType(na_object=None)
+    return np.dtypes.StringDType()
+
+
 @dataclass(frozen=True)
 class FixedString:
     """A fixed-length HDF5 string datatype of ``nbytes`` bytes.
@@ -93,12 +111,25 @@ class FixedString:
         """Decode a single stored value to ``str`` (trailing NULs stripped)."""
         return bytes(raw).rstrip(b"\x00").decode(self.encoding)
 
-    def decode(self, values: Any) -> npt.NDArray[np.object_]:
-        """Decode an array-like of stored bytes to an object array of ``str``."""
-        arr = np.asarray(values)
-        flat = arr.ravel()
-        decoded = [self.decode_scalar(v) for v in flat]
-        return np.array(decoded, dtype=object).reshape(arr.shape)
+    def decode(self, values: Any) -> npt.NDArray[Any]:
+        """Decode an array-like of stored bytes to a NumPy string array.
+
+        The result carries :func:`decoded_string_dtype`, which keeps the text in
+        one compact arena instead of allocating a Python ``str`` object per
+        element the way a ``dtype=object`` array does.
+
+        NumPy's own ``S`` → ``StringDType`` cast replaces the per-element
+        Python loop this used to run: it strips the trailing NULs HDF5 pads
+        with and takes the bytes as UTF-8, which also covers ``ascii`` columns
+        since ASCII is a subset.
+
+        The cast copies eagerly but validates lazily. Bytes that are not valid
+        UTF-8 — only reachable from a non-conformant producer, since
+        :meth:`encode` validates on write — therefore raise
+        ``UnicodeDecodeError`` when the offending value is read out of the
+        array, not when the column is read.
+        """
+        return np.asarray(values).astype(decoded_string_dtype())
 
     # -- introspection ------------------------------------------------------ #
     @classmethod

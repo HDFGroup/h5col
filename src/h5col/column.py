@@ -18,7 +18,7 @@ from .reserved import (
     ATTR_VALID_MIN,
 )
 from .searchindex import SearchIndex, wrap_index
-from .strings import FixedString
+from .strings import FixedString, decoded_string_dtype
 
 if TYPE_CHECKING:
     from .table import Table
@@ -83,11 +83,17 @@ class Column:
         return ATTR_CATEGORIES in self._ds.attrs
 
     @property
-    def categories(self) -> npt.NDArray[np.object_] | None:
-        """The category labels, or None for a non-categorical column."""
+    def categories(self) -> npt.NDArray[Any] | None:
+        """The category labels, or None for a non-categorical column.
+
+        String labels come back as a compact NumPy string array; numeric labels
+        keep their own dtype.
+        """
         if not self.is_categorical:
             return None
         labels = categorical.load_category_labels(self._table.group, self._ds)
+        if labels and all(isinstance(lab, str) for lab in labels):
+            return np.asarray(labels, dtype=decoded_string_dtype())
         return np.array(labels, dtype=object)
 
     @property

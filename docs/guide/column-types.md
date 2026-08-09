@@ -46,7 +46,8 @@ guarantee that matters is that a value whose encoding exceeds the budget raises
 silently truncated. If the data can outgrow the column, you find out at write
 time, not at analysis time.
 
-Reading decodes back to Python strings (a NumPy object array). The default
+Reading decodes back to Python strings, in a NumPy array of
+`numpy.dtypes.StringDType`. The default
 fill value for a string column is the empty string, so an empty value reads
 as missing by default; if empty strings are meaningful data in your model,
 account for that when choosing the column's fill.
