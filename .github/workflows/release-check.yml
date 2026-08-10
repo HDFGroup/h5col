@@ -1,0 +1,54 @@
+name: Release check
+
+# Fires only on a version tag. Confirms the commit the tag points at actually
+# reports the version the tag claims, which a tag pushed before the version
+# bump was committed does not.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  version-matches-tag:
+    name: version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          environments: dev
+          cache: true
+
+      - name: Compare package version with tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          pixi run -e dev python - <<'PY'
+          import os
+          import sys
+
+          from packaging.version import Version
+
+          import h5col
+
+          tag = os.environ["TAG"]
+          expected = tag.removeprefix("v")
+          actual = h5col.__version__
+
+          if actual != expected:
+              sys.exit(
+                  f"Tag {tag} expects version {expected!r}, but the commit it "
+                  f"points at reports {actual!r}. Either the version bump was "
+                  f"not committed before tagging, or the tag is on the wrong "
+                  f"commit."
+              )
+
+          parsed = Version(actual)
+          if parsed.is_prerelease or parsed.is_devrelease:
+              sys.exit(
+                  f"Tag {tag} is a release tag, but {actual!r} is a "
+                  f"pre-release version. Drop the suffix before tagging."
+              )
+
+          print(f"OK: {tag} -> {actual}")
+          PY

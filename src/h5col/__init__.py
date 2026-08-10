@@ -57,7 +57,10 @@ from .specs import (
 from .strings import FixedString, ascii_token_dtype
 from .table import Table
 
-__version__ = "0.2.0"
+# The only place the version is written. pyproject.toml reads it from here
+# (dynamic = ["version"]), and docs/conf.py imports it. A trailing `.devN`
+# means "working toward that release, not there yet"; drop it to release.
+__version__ = "0.3.0.dev0"
 
 __all__ = [
     "__version__",

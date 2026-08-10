@@ -4,7 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "h5col"
-version = "0.2.0"
+# Single source of truth: src/h5col/__init__.py. See [tool.hatch.version].
+dynamic = ["version"]
 description = "Reference implementation of the H5Col convention (HEP001): column-oriented tabular data in HDF5."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +28,9 @@ Documentation = "https://hdfgroup.github.io/h5col/"
 Repository = "https://github.com/HDFGroup/h5col"
 Changelog = "https://github.com/HDFGroup/h5col/blob/main/CHANGELOG.md"
 "H5Col convention (HEP001)" = "https://hdfalliance.github.io/heps/hep001/"
+
+[tool.hatch.version]
+path = "src/h5col/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/h5col"]
