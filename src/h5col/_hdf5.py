@@ -124,6 +124,63 @@ def extend_to(dataset: Any, new_len: int) -> None:
         dataset.resize((new_len,))
 
 
+def row_positions(rows: Any, nrows: int, name: str) -> np.ndarray:
+    """Normalize a scattered row selection to positions in ``[0, nrows)``.
+
+    Accepts a sequence of integers or a boolean mask with one entry per row.
+    A negative position counts back from the end, as it does in a slice, so
+    ``-1`` is the last row. Positions may be given in any order and may repeat.
+
+    A boolean mask has to be recognized rather than converted, because casting
+    one to an integer dtype turns it into a run of ones and zeros — a silently
+    wrong selection rather than an error.
+
+    Parameters
+    ----------
+    name:
+        The column's name, used only to make the error messages specific.
+
+    Raises
+    ------
+    IndexError
+        If a position is out of range, or a boolean mask is the wrong length.
+    TypeError
+        If *rows* holds values that are neither integers nor booleans.
+    ValueError
+        If *rows* is not one-dimensional.
+    """
+    arr = np.asarray(rows)
+    if arr.ndim != 1:
+        raise ValueError(f"rows must be a 1-D sequence, got {arr.ndim}-D")
+    if arr.dtype == np.bool_:
+        if arr.shape[0] != nrows:
+            raise IndexError(
+                f"a boolean mask needs one entry per row: got {arr.shape[0]} "
+                f"for column {name!r}, which has {nrows} rows"
+            )
+        return np.flatnonzero(arr).astype(np.int64, copy=False)
+    if arr.size == 0:
+        # An empty list arrives as float64, so let it through before the dtype
+        # check below; there are no positions to validate either way.
+        return np.empty(0, dtype=np.int64)
+    if not np.issubdtype(arr.dtype, np.integer):
+        raise TypeError(
+            f"row positions must be integers, got dtype {arr.dtype} for column {name!r}"
+        )
+    idx = arr.astype(np.int64)
+    negative = idx < 0
+    if negative.any():
+        idx[negative] += nrows
+    out_of_range = (idx < 0) | (idx >= nrows)
+    if out_of_range.any():
+        first = int(np.flatnonzero(out_of_range)[0])
+        raise IndexError(
+            f"row {int(arr[first])} is out of range for column {name!r}, "
+            f"which has {nrows} rows"
+        )
+    return idx
+
+
 def gather_rows(dataset: Any, rows: np.ndarray, nrows: int) -> np.ndarray:
     """Read *rows* of *dataset* with chunk-aligned, coalesced block reads.
 

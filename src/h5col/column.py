@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 
 from . import arrow, categorical, indexes, missing
-from ._hdf5 import gather_rows, read_str_attr
+from ._hdf5 import gather_rows, read_str_attr, row_positions
 from .booleans import decode_bool, is_bool_dtype
 from .reserved import (
     ATTR_CATEGORIES,
@@ -147,29 +147,52 @@ class Column:
         a = self._ds.attrs
         return a[ATTR_VALID_MAX] if ATTR_VALID_MAX in a else None
 
+    def _slice_block(self, key: slice, n: int) -> npt.NDArray[Any]:
+        """The stored values for a slice of rows, read as one hyperslab.
+
+        A slice is the one selection HDF5 serves directly, so it is kept off
+        the scattered path entirely. That path has to sort the positions,
+        gather, and scatter the result back into the caller's order, and for a
+        contiguous range every step of it is wasted: a million-row range spends
+        several milliseconds sorting a sequence that was already sorted. Going
+        straight to h5py skips all of it.
+        """
+        start, stop, step = key.indices(n)
+        if step > 0:
+            return self._ds[start:stop:step]
+        # HDF5 hyperslabs only run forwards, so read the same rows ascending
+        # and reverse the block. The copy keeps the result contiguous, which
+        # the Arrow export needs to hand the buffer over as it is.
+        wanted = range(start, stop, step)
+        if not wanted:
+            return self._ds[0:0]
+        block = self._ds[wanted[-1] : wanted[0] + 1 : -step]
+        return np.ascontiguousarray(block[::-1])
+
     def _raw_block(self, rows: Any = None) -> npt.NDArray[Any]:
         """The stored values for *rows*, or all of ``[0, NROWS)`` when None.
 
         Shared by every reader — decoded, masked or Arrow — so they agree on
-        which rows exist and how a scattered selection is fetched.
+        which rows exist and how a selection is fetched. *rows* may be a slice,
+        a sequence of integers, or a boolean mask with one entry per row.
+        Negative positions count back from ``NROWS``.
 
         Raises
         ------
         IndexError
-            If a row position is negative or not below ``NROWS``.
+            If a row position is out of range, or a boolean mask is the wrong
+            length.
+        TypeError
+            If *rows* holds values that are neither integers nor booleans.
         ValueError
             If *rows* is not one-dimensional.
         """
         n = self._table.nrows
         if rows is None:
             return self._ds[0:n]
-        idx = np.asarray(rows, dtype=np.int64)
-        if idx.ndim != 1:
-            raise ValueError(f"rows must be a 1-D sequence, got {idx.ndim}-D")
-        if idx.size and (int(idx.min()) < 0 or int(idx.max()) >= n):
-            raise IndexError(
-                f"row positions must lie in [0, {n}) for column {self.name!r}"
-            )
+        if isinstance(rows, slice):
+            return self._slice_block(rows, n)
+        idx = row_positions(rows, n, self.name)
         # gather_rows needs ascending input; restore the caller's order after.
         order = np.argsort(idx, kind="stable")
         raw = gather_rows(self._ds, idx[order], n)
@@ -268,10 +291,15 @@ class Column:
     def read_rows(self, rows: Any, *, masked: bool = True) -> Any:
         """Read just *rows*, decoded, in the order given.
 
-        Values are fetched with coalesced, chunk-aligned block reads, so a
-        selection confined to a few chunks costs a few chunks rather than the
-        whole column — in both time and peak memory. Rows may be given in any
-        order and may repeat.
+        *rows* may be a slice, a sequence of integers, or a boolean mask with
+        one entry per row. A negative position counts back from the end, so
+        ``-1`` is the last row. Integer positions may be given in any order and
+        may repeat.
+
+        A slice is read as a single hyperslab. Anything else is fetched with
+        coalesced, chunk-aligned block reads, so a selection confined to a few
+        chunks costs a few chunks rather than the whole column — in both time
+        and peak memory.
 
         Parameters
         ----------
@@ -281,7 +309,10 @@ class Column:
         Raises
         ------
         IndexError
-            If a row position is negative or not below ``NROWS``.
+            If a row position is out of range, or a boolean mask is the wrong
+            length.
+        TypeError
+            If *rows* holds values that are neither integers nor booleans.
         ValueError
             If *rows* is not one-dimensional.
         """

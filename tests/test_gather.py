@@ -87,7 +87,7 @@ def test_read_rows_rejects_out_of_range(h5file: h5py.File) -> None:
     with pytest.raises(IndexError):
         table["num"].read_rows([NROWS])
     with pytest.raises(IndexError):
-        table["num"].read_rows([-1])
+        table["num"].read_rows([-NROWS - 1])
 
 
 def test_read_rows_rejects_non_1d(h5file: h5py.File) -> None:
@@ -178,3 +178,146 @@ def test_selection_read_on_contiguous_column(h5path: Path) -> None:
         assert contiguous.chunks is None
         out = gather_rows(contiguous, np.array([5, 60]), 100)
         assert list(out) == [5, 60]
+
+
+# --------------------------------------------------------------------------- #
+# Slices
+#
+# A slice never reaches gather_rows: it is one hyperslab, so it skips the sort
+# and scatter the scattered path needs. The contract is the same either way —
+# the result must equal what NumPy would give for the same slice of read().
+# --------------------------------------------------------------------------- #
+
+SLICES = {
+    "clustered": slice(64, 80),
+    "whole": slice(None),
+    "strided": slice(10, 200, 7),
+    "reversed": slice(None, None, -1),
+    "reversed_strided": slice(None, None, -3),
+    "backwards_range": slice(100, 40, -2),
+    "negative_bounds": slice(-20, -5),
+    "open_start": slice(None, 50),
+    "open_stop": slice(450, None),
+    "empty": slice(20, 10),
+    "degenerate": slice(5, 5),
+    "past_the_end": slice(NROWS - 3, NROWS + 999),
+    "last_row": slice(-1, None),
+}
+
+
+@pytest.mark.parametrize("colname", ["num", "flt", "txt", "flag", "cat"])
+@pytest.mark.parametrize("case", list(SLICES))
+def test_slice_matches_full_read_then_slice(
+    h5file: h5py.File, colname: str, case: str
+) -> None:
+    table = _table(h5file)
+    key = SLICES[case]
+    col = table[colname]
+
+    sliced = col.read_rows(key)
+    expected = col.read()[key]
+
+    assert sliced.shape == expected.shape
+    assert sliced.dtype == expected.dtype
+    if colname == "flt":
+        np.testing.assert_array_equal(sliced, expected)  # NaN-aware
+    else:
+        assert list(sliced) == list(expected)
+
+
+@pytest.mark.parametrize("case", list(SLICES))
+def test_slice_carries_the_matching_mask(h5file: h5py.File, case: str) -> None:
+    # The mask has to describe the rows that were read, not the rows of the
+    # whole column, so a slice that starts partway in cannot be off by its
+    # offset.
+    table = _table(h5file)
+    col = table["num"]
+    key = SLICES[case]
+    np.testing.assert_array_equal(
+        np.ma.getmaskarray(col.read_rows(key)),
+        np.ma.getmaskarray(col.read())[key],
+    )
+
+
+def test_slice_stops_at_nrows_not_the_dataset_extent(h5file: h5py.File) -> None:
+    # truncate lowers NROWS and leaves the rows above it as reserved storage,
+    # which a read must never surface.
+    table = _table(h5file)
+    table.truncate(10)
+    col = table["num"]
+    assert col.dataset.shape[0] > 10
+
+    assert col.read_rows(slice(None)).shape == (10,)
+    assert col.read_rows(slice(0, 500)).shape == (10,)
+    assert list(col.read_rows(slice(-3, None))) == list(col.read()[-3:])
+
+
+def test_slice_matches_the_equivalent_fancy_selection(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    col = table["txt"]
+    assert list(col.read_rows(slice(64, 80))) == list(col.read_rows(np.arange(64, 80)))
+
+
+def test_slice_step_of_zero_is_rejected(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    with pytest.raises(ValueError):
+        table["num"].read_rows(slice(None, None, 0))
+
+
+# --------------------------------------------------------------------------- #
+# Boolean masks and negative positions
+# --------------------------------------------------------------------------- #
+
+
+def test_boolean_mask_selects_the_marked_rows(h5file: h5py.File) -> None:
+    # A mask cast to an integer dtype becomes a run of ones and zeros, which
+    # reads rows 1 and 0 over and over instead of the marked ones — wrong
+    # rows, no error.
+    table = _table(h5file)
+    mask = np.zeros(NROWS, dtype=bool)
+    mask[[3, 7, 9, 498]] = True
+    col = table["txt"]
+
+    assert list(col.read_rows(mask)) == list(col.read()[mask])
+    assert list(col.read_rows(mask)) == list(col.read_rows([3, 7, 9, 498]))
+
+
+def test_all_false_boolean_mask_reads_nothing(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    assert table["num"].read_rows(np.zeros(NROWS, dtype=bool)).shape == (0,)
+
+
+@pytest.mark.parametrize("length", [NROWS - 1, NROWS + 1, 0])
+def test_boolean_mask_of_the_wrong_length_is_rejected(
+    h5file: h5py.File, length: int
+) -> None:
+    table = _table(h5file)
+    with pytest.raises(IndexError, match="one entry per row"):
+        table["num"].read_rows(np.zeros(length, dtype=bool))
+
+
+def test_negative_positions_count_back_from_the_end(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    col = table["txt"]
+    assert list(col.read_rows([-1, -2, -NROWS])) == list(col.read()[[-1, -2, -NROWS]])
+
+
+def test_negative_and_positive_positions_mix(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    col = table["num"]
+    rows = [0, -1, 250, -250]
+    assert list(col.read_rows(rows)) == list(col.read()[rows])
+
+
+@pytest.mark.parametrize("rows", [[1.5], [1.0, 2.0], np.array([1.0])])
+def test_non_integer_positions_are_rejected(h5file: h5py.File, rows: object) -> None:
+    # Casting these would truncate silently, which this package does not do.
+    table = _table(h5file)
+    with pytest.raises(TypeError, match="must be integers"):
+        table["num"].read_rows(rows)
+
+
+def test_empty_selection_still_works(h5file: h5py.File) -> None:
+    table = _table(h5file)
+    for rows in ([], np.empty(0, dtype=np.int64)):
+        assert table["num"].read_rows(rows).shape == (0,)

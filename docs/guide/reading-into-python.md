@@ -330,6 +330,21 @@ selection, or use {meth}`Column.read_rows <h5col.Column.read_rows>`, both of
 which fetch only the chunks they need. The [queries](../queries/index.md)
 section covers selection properly.
 
+`read_rows` takes whatever describes the rows you want — a slice, a list of
+positions, or a boolean array with one entry per row:
+
+```python
+col = table["t_air"]
+col.read_rows(slice(17, 98))   # a range
+col.read_rows([-1, -2])        # the last two rows
+col.read_rows(col.is_missing())  # only the missing ones
+```
+
+A range is read in a single pass, so asking for part of a column really is
+cheaper than asking for all of it. Positions may be listed in any order and may
+repeat, and a negative one counts back from the last row, the way it does in a
+slice.
+
 **Arrow needs a dependency.** It is optional on purpose: a file written by
 `h5col` can be read with nothing but HDF5, and requiring a large package for
 the base case would undercut that.

@@ -4,7 +4,33 @@ All notable changes to H5Col are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/).
 
-## [0.3.0-dev]
+## [Unreleased]
+
+### Added
+
+- **Row selections take slices, boolean masks and negative positions.**
+  `Column.read_rows`, `Column.to_arrow` and everything built on them accept a
+  slice (`read_rows(slice(17, 98))`), a boolean array with one entry per row
+  (`read_rows(col.is_missing())`), and positions counting back from the end
+  (`read_rows([-1, -2])`) alongside the integer sequences they already took.
+
+  A slice is read as a single hyperslab rather than going through the gather
+  path, which had to sort the positions and scatter the result back into the
+  caller's order — work that is pure overhead when the positions were a range
+  to begin with. Reading a million contiguous rows from a two-million-row
+  column drops from 6.9 ms to 1.3 ms, which is what the same read costs in
+  h5py directly. Asking for half a column is now cheaper than asking for all
+  of it; previously it was three times more expensive.
+
+### Fixed
+
+- A boolean mask passed to `read_rows` selected the wrong rows. The mask was
+  cast to an integer dtype, turning it into a run of ones and zeros, so a mask
+  marking rows 3, 7 and 9 read rows 1 and 0 over and over. A mask now selects
+  the rows it marks, and one of the wrong length raises `IndexError` rather
+  than being reinterpreted.
+- Non-integer row positions were truncated silently — `read_rows([1.5])` read
+  row 1. They now raise `TypeError`.
 
 ## [0.2.0] - 2026-08-10
 

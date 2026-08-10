@@ -35,7 +35,7 @@ import numpy as np
 import numpy.typing as npt
 
 from . import categorical, missing
-from ._hdf5 import read_str_attr
+from ._hdf5 import read_str_attr, row_positions
 from .booleans import decode_bool, is_bool_dtype
 from .exceptions import ConformanceError
 from .reserved import (
@@ -202,6 +202,25 @@ def list_column_metadata(col: Any) -> dict[str, str]:
     return meta
 
 
+def _select(pa: Any, array: Any, rows: Any, nrows: int, name: str) -> Any:
+    """*rows* of an already-built Arrow array.
+
+    A list column is wrapped whole and then narrowed, because a subset of
+    OFFSETS cannot be shared as a buffer. This keeps the row spec meaning the
+    same thing here as it does for a scalar column, where the selection is
+    applied while reading instead.
+    """
+    if isinstance(rows, slice):
+        start, stop, step = rows.indices(nrows)
+        if step == 1:
+            # Zero-copy: a contiguous run needs no take at all.
+            return array.slice(start, max(0, stop - start))
+        positions = np.arange(start, stop, step, dtype=np.int64)
+    else:
+        positions = row_positions(rows, nrows, name)
+    return array.take(pa.array(positions))
+
+
 def table_arrow(table: Any, columns: Any = None, rows: Any = None) -> Any:
     """Convert a table (or *rows* of it) to an Arrow table.
 
@@ -221,11 +240,9 @@ def table_arrow(table: Any, columns: Any = None, rows: Any = None) -> Any:
             raise KeyError(name)
         col = cols[name]
         if isinstance(col, ListColumn):
-            # Wrap the whole column, then take: a subset of offsets cannot be
-            # shared, and Arrow's take over a large_list beats rebuilding them.
             array = list_array(col.group, table.nrows)
             if rows is not None:
-                array = array.take(pa.array(np.asarray(rows, dtype=np.int64)))
+                array = _select(pa, array, rows, table.nrows, name)
             meta = list_column_metadata(col)
         else:
             array = column_array(col, rows)

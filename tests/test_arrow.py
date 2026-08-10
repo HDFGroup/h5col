@@ -461,3 +461,59 @@ def test_single_null_at_every_position(h5file: h5py.File) -> None:
         )
         t.append({"xs": rows})
         assert t.to_arrow()["xs"].to_pylist() == rows, pos
+
+
+# --------------------------------------------------------------------------- #
+# Slices through the Arrow export
+# --------------------------------------------------------------------------- #
+def test_column_to_arrow_takes_a_slice(h5file: h5py.File) -> None:
+    col = _table(h5file)["t_air"]
+    assert col.to_arrow(slice(0, 2)).to_pylist() == col.to_arrow([0, 1]).to_pylist()
+    assert col.to_arrow(slice(None)).to_pylist() == col.to_arrow(None).to_pylist()
+    assert col.to_arrow(slice(5, 5)).to_pylist() == []
+
+
+@pytest.mark.parametrize("name", ["station", "t_air", "kind"])
+def test_reversed_slice_survives_the_buffer_handover(
+    h5file: h5py.File, name: str
+) -> None:
+    # A reversed hyperslab is a non-contiguous view, and the numeric export
+    # hands its buffer to Arrow as it is — so the block has to be made
+    # contiguous first or Arrow reads the wrong bytes.
+    col = _table(h5file)[name]
+    forward = col.to_arrow(None).to_pylist()
+    assert col.to_arrow(slice(None, None, -1)).to_pylist() == forward[::-1]
+
+
+def test_select_narrows_a_list_column_the_same_way_for_every_row_spec(
+    h5file: h5py.File,
+) -> None:
+    from h5col.arrow import _select, list_array
+
+    t = _list_table(h5file)
+    col = t["xs"]
+    whole = list_array(col.group, t.nrows)
+    rows = col.read()
+
+    # step 1 takes Arrow's zero-copy slice; the rest go through take.
+    assert _select(pa, whole, slice(0, 2), t.nrows, "xs").to_pylist() == rows[0:2]
+    assert (
+        _select(pa, whole, slice(None, None, -1), t.nrows, "xs").to_pylist()
+        == (rows[::-1])
+    )
+    assert _select(pa, whole, slice(0, 3, 2), t.nrows, "xs").to_pylist() == rows[0:3:2]
+    assert _select(pa, whole, [2, 0], t.nrows, "xs").to_pylist() == [rows[2], rows[0]]
+    assert _select(pa, whole, [-1], t.nrows, "xs").to_pylist() == [rows[-1]]
+    mask = np.array([False, True, False])
+    assert _select(pa, whole, mask, t.nrows, "xs").to_pylist() == [rows[1]]
+
+
+def test_select_rejects_a_bad_row_spec(h5file: h5py.File) -> None:
+    from h5col.arrow import _select, list_array
+
+    t = _list_table(h5file)
+    whole = list_array(t["xs"].group, t.nrows)
+    with pytest.raises(IndexError):
+        _select(pa, whole, [t.nrows], t.nrows, "xs")
+    with pytest.raises(IndexError, match="one entry per row"):
+        _select(pa, whole, np.zeros(99, dtype=bool), t.nrows, "xs")
