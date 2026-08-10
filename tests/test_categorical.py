@@ -32,7 +32,8 @@ def test_categorical_missing_via_none(h5file: h5py.File) -> None:
     t = Table.create(g, [ColumnSpec(name="c", categories=["a", "b"])])
     t.append({"c": ["a", None, "b"]})
     col = t["c"]
-    assert list(col.read()) == ["a", None, "b"]
+    assert col.read().tolist() == ["a", None, "b"]
+    assert list(col.read(masked=False)) == ["a", None, "b"]
     assert list(col.is_missing()) == [False, True, False]
 
 
@@ -114,7 +115,7 @@ def test_categorical_unsigned_code_dtype_default_fill(h5file: h5py.File) -> None
     # Default unsigned fill is the type max (255), outside [0, 2).
     assert int(t["c"].fill_value) == 255
     t.append({"c": ["a", None, "b"]})
-    assert list(t["c"].read()) == ["a", None, "b"]
+    assert t["c"].read().tolist() == ["a", None, "b"]
     assert list(t["c"].is_missing()) == [False, True, False]
 
 
@@ -211,5 +212,4 @@ def test_categorical_read_and_is_missing_never_disagree(h5file: h5py.File) -> No
     t = Table.create(g, [ColumnSpec(name="c", categories=["a", "b", "c"])])
     t.append({"c": ["a", None, "b", None, "c"]})
     col = t["c"]
-    from_read = np.array([v is None for v in col.read()])
-    np.testing.assert_array_equal(from_read, col.is_missing())
+    np.testing.assert_array_equal(col.read().mask, col.is_missing())

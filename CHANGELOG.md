@@ -51,6 +51,26 @@ to follow [Semantic Versioning](https://semver.org/).
   array. For 400,000 short strings the decoded column costs 6.4 MB rather than
   25.8 MB of resident memory, and `Column.read` on that column drops from
   23 ms to 2 ms.
+- **`read()` now returns masked arrays by default.** `Column.read`,
+  `Column.read_rows`, `Table.read` and `Selection.read` take `masked=True`,
+  and every scalar column comes back as a `numpy.ma.MaskedArray` whose mask
+  marks its missing rows. Previously a missing row was handed back as the
+  column's fill value with nothing to distinguish it from data, so a mean over
+  a column with missing rows was silently wrong. Pass `masked=False` for the
+  previous behaviour, unchanged.
+  - Uniform across scalar columns: boolean columns, which H5Col forbids from
+    declaring a fill, and columns that declare none still come back masked with
+    an all-False mask, so code written over the returned dict never has to
+    branch on whether a given column can be missing.
+  - List columns are unchanged — ragged, so they cannot be masked arrays — and
+    already spell a null row `None`. They accept `masked=` and ignore it.
+  - `fill_value` is the column's own decoded sentinel, so
+    `read().filled()` reproduces `read(masked=False)` and any operation that
+    drops the mask degrades to the previous behaviour rather than to NumPy's
+    defaults (999999 for an int8 column, the string `N/A` for a string one).
+  - Note that `list(...)` over a masked array yields `numpy.ma.masked` where
+    `.tolist()` yields `None`, and that `np.concatenate`, `np.stack` and
+    friends drop the mask silently — use the `np.ma.*` equivalents.
 - `Column.categories` returns a `StringDType` array for string labels.
 - The `S` to `StringDType` cast validates lazily, so a non-conformant producer's
   invalid UTF-8 now raises `UnicodeDecodeError` when the offending value is read

@@ -853,11 +853,11 @@ def _scan_leaf(leaf: _Leaf, table: Table) -> np.ndarray:
             else:
                 cmp = _py_compare(codes, op, cv)
     elif op == "in":
-        vals = col.read().tolist()
+        vals = col.read(masked=False).tolist()
         targets = {_oracle_str(col, v) for v in leaf.pred.value}
         cmp = np.array([v in targets for v in vals], dtype=np.bool_)
     else:
-        vals = col.read().tolist()
+        vals = col.read(masked=False).tolist()
         cmp = _py_compare(vals, op, _oracle_str(col, leaf.pred.value))
 
     if leaf.negated:
@@ -962,8 +962,12 @@ class Selection:
     def __len__(self) -> int:
         return self.count
 
-    def read(self, columns: Any = None) -> dict[str, Any]:
+    def read(self, columns: Any = None, *, masked: bool = True) -> dict[str, Any]:
         """Materialize the selected rows as ``{name: values}``.
+
+        *masked* is as for :meth:`h5col.Table.read`: each scalar column comes
+        back as a :class:`numpy.ma.MaskedArray` marking its missing rows unless
+        False is passed.
 
         Each value is a NumPy array for a scalar column and a Python ``list``
         (of per-row lists, ``None`` for a null row) for a list column.
@@ -995,9 +999,9 @@ class Selection:
             col = cols[name]
             if isinstance(col, Column) and _worth_gathering(col, rows, nrows):
                 # Selective enough to be worth fetching only the wanted chunks.
-                out[name] = col.read_rows(rows)
+                out[name] = col.read_rows(rows, masked=masked)
                 continue
-            full = col.read()
+            full = col.read(masked=masked)
             if isinstance(full, np.ndarray):
                 out[name] = full[rows]
             else:  # list column read() returns a Python list

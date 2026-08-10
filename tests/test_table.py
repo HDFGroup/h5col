@@ -92,8 +92,9 @@ def test_missing_via_absent_column(h5file: h5py.File) -> None:
     t.append({"a": [1, 2, 3]})  # b absent -> fill (missing)
     assert list(t["b"].is_missing()) == [True, True, True]
     assert list(t["a"].is_missing()) == [False, False, False]
-    # b reads back as its fill value.
-    assert list(t["b"].read()) == [-2147483647] * 3
+    # b reads back as its fill value, and masked as missing.
+    assert list(t["b"].read(masked=False)) == [-2147483647] * 3
+    assert t["b"].read().tolist() == [None] * 3
 
 
 def test_boolean_no_fill_and_required_in_append(h5file: h5py.File) -> None:

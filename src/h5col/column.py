@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -162,18 +162,92 @@ class Column:
             return decode_bool(raw)
         return raw
 
-    def read(self) -> npt.NDArray[Any]:
-        """Read the logical rows ``[0, NROWS)``, decoded to friendly values."""
-        n = self._table.nrows
-        return self._decode(self._ds[0:n])
+    def _missing_mask(self, raw: npt.NDArray[Any]) -> npt.NDArray[np.bool_]:
+        """Missing-row mask for a block of *stored* values already in hand.
 
-    def read_rows(self, rows: Any) -> npt.NDArray[Any]:
+        Taken from the block the caller just read rather than by re-reading the
+        column, so a masked read costs one pass over the data, not two.
+
+        A boolean column, which H5Col forbids from declaring a fill value, and a
+        full-domain column that declares none, have no missing rows — their mask
+        is all-False rather than absent, so every scalar column comes back the
+        same shape of object.
+        """
+        if self.is_boolean or not self._has_user_fill():
+            return np.zeros(raw.shape[0], dtype=np.bool_)
+        return missing.is_missing(raw, self._ds.fillvalue)
+
+    def _mask(self, raw: npt.NDArray[Any], decoded: npt.NDArray[Any]) -> Any:
+        """Pair *decoded* values with the missing rows *raw* implies."""
+        mask = self._missing_mask(raw)
+        out = np.ma.MaskedArray(decoded, mask=mask, copy=False)
+        if mask.any():
+            # Every masked position already holds the decoded fill, so take it
+            # from there: NumPy's own default is unusable (999999 for an int8
+            # column, the string "N/A" for a string one), and decoding the
+            # stored sentinel separately would re-read a categorical's whole
+            # labels dataset on every read. This is what makes
+            # ``read().filled()`` reproduce ``read(masked=False)``.
+            #
+            # It must be a 0-d array: assigning the bare ``None`` a categorical
+            # decodes to is accepted and then silently ignored, leaving NumPy's
+            # sentinel to masquerade as a label.
+            try:
+                # NumPy's stub types fill_value as a scalar; at runtime only
+                # the 0-d array form is honoured for these dtypes.
+                out.fill_value = np.asarray(  # type: ignore[assignment]
+                    decoded[int(np.argmax(mask))], dtype=decoded.dtype
+                )
+            except UnicodeDecodeError:
+                # A fill a non-conformant producer wrote as invalid UTF-8.
+                # Reading the column must not depend on decoding it.
+                pass
+        return out
+
+    @overload
+    def read(self, *, masked: Literal[True] = ...) -> np.ma.MaskedArray: ...
+    @overload
+    def read(self, *, masked: Literal[False]) -> npt.NDArray[Any]: ...
+    @overload
+    def read(self, *, masked: bool) -> Any: ...
+
+    def read(self, *, masked: bool = True) -> Any:
+        """Read the logical rows ``[0, NROWS)``, decoded to friendly values.
+
+        Parameters
+        ----------
+        masked:
+            Return a :class:`numpy.ma.MaskedArray` whose mask marks the
+            column's missing rows (the default). Pass False for the plain
+            array, in which case a missing row holds the column's fill value
+            with nothing to distinguish it from data.
+        """
+        n = self._table.nrows
+        raw = self._ds[0:n]
+        decoded = self._decode(raw)
+        return self._mask(raw, decoded) if masked else decoded
+
+    @overload
+    def read_rows(
+        self, rows: Any, *, masked: Literal[True] = ...
+    ) -> np.ma.MaskedArray: ...
+    @overload
+    def read_rows(self, rows: Any, *, masked: Literal[False]) -> npt.NDArray[Any]: ...
+    @overload
+    def read_rows(self, rows: Any, *, masked: bool) -> Any: ...
+
+    def read_rows(self, rows: Any, *, masked: bool = True) -> Any:
         """Read just *rows*, decoded, in the order given.
 
         Values are fetched with coalesced, chunk-aligned block reads, so a
         selection confined to a few chunks costs a few chunks rather than the
         whole column — in both time and peak memory. Rows may be given in any
         order and may repeat.
+
+        Parameters
+        ----------
+        masked:
+            As for :meth:`read`.
 
         Raises
         ------
@@ -195,7 +269,8 @@ class Column:
         raw = gather_rows(self._ds, idx[order], n)
         restored = np.empty_like(raw)
         restored[order] = raw
-        return self._decode(restored)
+        decoded = self._decode(restored)
+        return self._mask(restored, decoded) if masked else decoded
 
     @property
     def search_indexes(self) -> list[SearchIndex]:

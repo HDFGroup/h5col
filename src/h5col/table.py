@@ -717,6 +717,7 @@ class Table:
         *,
         where: Any = None,
         explain: bool = False,
+        masked: bool = True,
     ) -> Any:
         """Read columns (default all) as ``{name: array}`` over ``[0, NROWS)``.
 
@@ -724,6 +725,15 @@ class Table:
         ``List[Tuple]`` = AND, or a ``List[List[Tuple]]`` = OR-of-ANDs), only the
         matching rows are returned. With ``explain=True`` the return value is a
         ``(result, QueryPlan)`` pair.
+
+        Parameters
+        ----------
+        masked:
+            Return each scalar column as a :class:`numpy.ma.MaskedArray` whose
+            mask marks its missing rows (the default). List columns ignore it,
+            already spelling a null row ``None``. Pass False for plain arrays,
+            in which case a missing row holds the column's fill value with
+            nothing to distinguish it from data.
 
         Raises
         ------
@@ -734,7 +744,7 @@ class Table:
         """
         if where is not None or explain:
             sel = self.select(where)
-            result = sel.read(columns)
+            result = sel.read(columns, masked=masked)
             return (result, sel.explain()) if explain else result
         names = list(columns) if columns is not None else self.column_names
         cols = self.columns
@@ -742,7 +752,12 @@ class Table:
         for name in names:
             if name not in cols:
                 raise KeyError(name)
-            out[name] = cols[name].read()
+            col = cols[name]
+            # A list column has no mask to carry: it already spells a null row
+            # `None`, and a ragged column cannot be a MaskedArray at all.
+            out[name] = (
+                col.read() if isinstance(col, ListColumn) else col.read(masked=masked)
+            )
         return out
 
     def select(self, where: Any = None) -> query.Selection:

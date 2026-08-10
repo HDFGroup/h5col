@@ -75,8 +75,13 @@ class ListColumn:
         """The list column's ``description`` attribute, or None when unset."""
         return read_str_attr(self._g, ATTR_DESCRIPTION)
 
-    def read(self) -> list[Any]:
-        """Read rows ``[0, NROWS)`` as a list of per-row lists (``None`` = null)."""
+    def read(self, *, masked: bool = True) -> list[Any]:
+        """Read rows ``[0, NROWS)`` as a list of per-row lists (``None`` = null).
+
+        ``masked`` is accepted and ignored, so a caller can pass it uniformly
+        across a table's columns. A list column is ragged and so cannot be a
+        :class:`numpy.ma.MaskedArray`. It already spells a null row ``None``.
+        """
         return lists.read_list_column(self._g, self._table.nrows)
 
     def is_missing(self) -> npt.NDArray[np.bool_]:

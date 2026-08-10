@@ -6,7 +6,14 @@ import h5py
 import numpy as np
 import pytest
 
-from h5col import ColumnSpec, Table
+from h5col import (
+    Column,
+    ColumnSpec,
+    LeafValuesSpec,
+    ListColumnSpec,
+    Table,
+    field,
+)
 from h5col.booleans import bool_dtype
 from h5col.exceptions import FillValueError, SchemaError
 from h5col.missing import (
@@ -140,7 +147,8 @@ def test_append_none_writes_the_integer_fill(h5file: h5py.File) -> None:
     )
     table.append({"x": [1, None, 3]})
 
-    assert list(table["x"].read()) == [1, -1, 3]
+    assert list(table["x"].read(masked=False)) == [1, -1, 3]
+    assert table["x"].read().tolist() == [1, None, 3]
     assert list(table["x"].is_missing()) == [False, True, False]
 
 
@@ -150,7 +158,7 @@ def test_append_none_writes_the_nan_fill(h5file: h5py.File) -> None:
     )
     table.append({"x": [1.5, None, 3.5]})
 
-    values = table["x"].read()
+    values = table["x"].read(masked=False)
     assert np.isnan(values[1])
     assert list(table["x"].is_missing()) == [False, True, False]
 
@@ -161,7 +169,7 @@ def test_append_none_writes_the_recommended_sentinel_fill(h5file: h5py.File) -> 
     table = _one_column_table(h5file, ColumnSpec(name="x", dtype="float64"))
     table.append({"x": [1.5, None]})
 
-    values = table["x"].read()
+    values = table["x"].read(masked=False)
     assert values[1] == recommended_fill(np.dtype("float64"))
     assert not np.isnan(values[1])
     assert list(table["x"].is_missing()) == [False, True]
@@ -173,7 +181,7 @@ def test_append_none_writes_the_string_fill_not_the_word_none(
     table = _one_column_table(h5file, ColumnSpec(name="x", dtype=FixedString(nbytes=8)))
     table.append({"x": ["ab", None, "cd"]})
 
-    values = table["x"].read()
+    values = table["x"].read(masked=False)
     assert values[1] != "None"  # never str(None)
     assert list(values) == ["ab", "", "cd"]
     assert list(table["x"].is_missing()) == [False, True, False]
@@ -243,7 +251,8 @@ def test_append_masked_string_column_records_missing(h5file: h5py.File) -> None:
             )
         }
     )
-    assert list(t["s"].read()) == ["", "bb", "cc"]
+    assert list(t["s"].read(masked=False)) == ["", "bb", "cc"]
+    assert t["s"].read().tolist() == [None, "bb", "cc"]
     assert list(t["s"].is_missing()) == [True, False, False]
 
 
@@ -272,7 +281,7 @@ def test_append_masked_categorical_column_records_missing(h5file: h5py.File) -> 
             )
         }
     )
-    assert list(t["k"].read()) == [None, "b"]
+    assert t["k"].read().tolist() == [None, "b"]
     assert list(t["k"].is_missing()) == [True, False]
 
 
@@ -283,3 +292,197 @@ def test_append_masked_boolean_column_rejected(h5file: h5py.File) -> None:
     with pytest.raises(SchemaError, match="cannot hold a missing"):
         t.append({"f": np.ma.masked_array([True, False], mask=[True, False])})
     assert t.nrows == 0
+
+
+# --------------------------------------------------------------------------- #
+# Masked output: `read()` carries the missing rows in a mask
+# --------------------------------------------------------------------------- #
+def _mixed_table(h5file: h5py.File) -> Table:
+    t = Table.create(
+        h5file.create_group("t"),
+        [
+            ColumnSpec(name="num", dtype="f4", fill_value=np.float32(-999)),
+            ColumnSpec(name="i8", dtype="int8", fill_value=np.int8(-127)),
+            ColumnSpec(name="s", dtype=FixedString(nbytes=8)),
+            ColumnSpec(name="cat", categories=["a", "b"]),
+            ColumnSpec(name="flag", dtype="bool"),
+            ColumnSpec(name="full", dtype="f4", fill_value=None),
+        ],
+    )
+    t.append(
+        {
+            "num": [1.0, None, 3.0],
+            "i8": [1, None, 3],
+            "s": ["ab", None, "cd"],
+            "cat": ["a", None, "b"],
+            "flag": [True, False, True],
+            "full": [1.0, 2.0, 3.0],
+        }
+    )
+    return t
+
+
+def test_masked_is_the_default_for_every_scalar_column(h5file: h5py.File) -> None:
+    for name, values in _mixed_table(h5file).read().items():
+        assert isinstance(values, np.ma.MaskedArray), name
+
+
+def test_uniform_even_where_missing_is_impossible(h5file: h5py.File) -> None:
+    # H5Col forbids a boolean column from declaring a fill, so it can never
+    # have a missing row. It still comes back masked, all-False, so generic
+    # code over the dict never has to branch on the column.
+    col = _mixed_table(h5file)["flag"]
+    assert col.fill_value is None
+    assert isinstance(col.read(), np.ma.MaskedArray)
+    assert not col.read().mask.any()
+
+
+def test_column_with_no_declared_fill_reads_all_present(h5file: h5py.File) -> None:
+    # h5col's own writer always sets a fill -- ColumnSpec(fill_value=None) takes
+    # the recommended sentinel -- so a fill-less non-boolean column only turns
+    # up in a file from another producer. Nothing is missing when nothing
+    # declares what missing looks like.
+    t = _mixed_table(h5file)
+    assert t["full"].fill_value is not None  # the recommended sentinel, not None
+    ds = t.group.create_dataset("foreign", data=np.arange(3, dtype="f4"))
+    col = Column(ds, t)
+    assert col.fill_value is None
+    assert not col.read().mask.any()
+    assert col.read().tolist() == [0.0, 1.0, 2.0]
+
+
+def test_mask_is_materialised_not_nomask(h5file: h5py.File) -> None:
+    # `nomask` is a scalar; `.mask[i]` on it raises IndexError. Always handing
+    # back a real array keeps indexing the mask safe on every column.
+    m = _mixed_table(h5file)["flag"].read().mask
+    assert isinstance(m, np.ndarray) and m.shape == (3,)
+    assert m[0] is np.False_ or m[0] == False  # noqa: E712 - indexable at all
+
+
+def test_filled_reproduces_the_unmasked_read(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    for name in ("num", "i8", "s"):
+        col = t[name]
+        assert list(col.read().filled()) == list(col.read(masked=False))
+
+
+def test_fill_value_is_the_columns_sentinel_not_numpys(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    # NumPy would default to 999999 for int8 -- which wraps to 63 -- and the
+    # string "N/A" for a string column.
+    assert t["i8"].read().fill_value == np.int8(-127)
+    assert t["num"].read().fill_value == np.float32(-999)
+    assert t["s"].read().fill_value == ""
+
+
+def test_masked_false_is_the_previous_behaviour(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    plain = t["num"].read(masked=False)
+    assert not isinstance(plain, np.ma.MaskedArray)
+    assert list(plain) == [1.0, -999.0, 3.0]
+
+
+def test_mask_matches_is_missing_on_every_column(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    for name in t.column_names:
+        col = t[name]
+        np.testing.assert_array_equal(col.read().mask, col.is_missing(), err_msg=name)
+
+
+def test_read_rows_is_masked_too(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    got = t["num"].read_rows([2, 1, 1])
+    assert isinstance(got, np.ma.MaskedArray)
+    assert got.tolist() == [3.0, None, None]
+    assert list(t["num"].read_rows([2, 1], masked=False)) == [3.0, -999.0]
+
+
+def test_selection_read_is_masked_on_both_paths(h5file: h5py.File) -> None:
+    t = _mixed_table(h5file)
+    for masked, kind in ((True, np.ma.MaskedArray), (False, np.ndarray)):
+        out = t.select(field("num") != 1.0).read(["num", "s"], masked=masked)
+        for name, values in out.items():
+            assert isinstance(values, kind), (name, masked)
+
+
+def test_list_columns_are_untouched_by_masked(h5file: h5py.File) -> None:
+    t = Table.create(
+        h5file.create_group("t"),
+        [
+            ColumnSpec(name="i", dtype="i8"),
+            ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="f8"), nullable=True),
+        ],
+    )
+    t.append({"i": [1, 2], "xs": [[1.0], None]})
+    for masked in (True, False):
+        out = t.read(masked=masked)
+        assert out["xs"] == [[1.0], None]
+        assert isinstance(out["i"], np.ma.MaskedArray if masked else np.ndarray)
+
+
+def test_filled_reproduces_unmasked_read_for_categoricals(h5file: h5py.File) -> None:
+    # A category whose label collides with NumPy's own string sentinel: the
+    # missing row and the genuine "N/A" row must stay distinguishable.
+    t = Table.create(
+        h5file.create_group("t"),
+        [ColumnSpec(name="c", categories=["red", "N/A", "blue"])],
+    )
+    t.append({"c": ["red", None, "N/A", "blue"]})
+    col = t["c"]
+    assert col.read().filled().tolist() == col.read(masked=False).tolist()
+    assert col.read().filled().tolist() == ["red", None, "N/A", "blue"]
+
+
+def test_filled_keeps_numeric_categories_numeric(h5file: h5py.File) -> None:
+    # NumPy's default fill for an object array is the string "?", which would
+    # splice a str into a column of integer labels.
+    t = Table.create(
+        h5file.create_group("t"), [ColumnSpec(name="n", categories=[10, 20, 30])]
+    )
+    t.append({"n": [10, None, 30]})
+    assert t["n"].read().filled().tolist() == [10, None, 30]
+
+
+def test_list_column_read_accepts_and_ignores_masked(h5file: h5py.File) -> None:
+    t = Table.create(
+        h5file.create_group("t"),
+        [
+            ColumnSpec(name="i", dtype="i8"),
+            ListColumnSpec(name="r", values=LeafValuesSpec(dtype="f8")),
+        ],
+    )
+    t.append({"i": [1], "r": [[1.0]]})
+    for masked in (True, False):
+        # Uniform across the table: a caller may pass the keyword to any column.
+        assert t["r"].read(masked=masked) == [[1.0]]
+        t["i"].read(masked=masked)
+
+
+def test_undecodable_fill_does_not_abort_the_read(h5file: h5py.File) -> None:
+    # A fill only another producer could write. Setting fill_value is a
+    # convenience; it must never cost the caller the column.
+    t = Table.create(
+        h5file.create_group("t"),
+        [ColumnSpec(name="s", dtype=FixedString(nbytes=8), fill_value=b"\xff\xfe")],
+    )
+    t.append({"s": ["ab", None, "ef"]})
+    got = t["s"].read()
+    assert got.mask.tolist() == [False, True, False]
+    assert got[0] == "ab"
+
+
+def test_read_then_append_preserves_missing_rows(h5file: h5py.File) -> None:
+    spec = [
+        ColumnSpec(name="x", dtype="f4", fill_value=np.float32(-999)),
+        ColumnSpec(name="s", dtype=FixedString(nbytes=4)),
+        ColumnSpec(name="c", categories=["a", "b"]),
+    ]
+    a = Table.create(h5file.create_group("a"), spec)
+    a.append({"x": [1.0, None, 3.0], "s": ["p", None, "q"], "c": ["a", None, "b"]})
+    b = Table.create(h5file.create_group("b"), spec)
+    b.append(a.read())  # masked arrays straight back in
+    for name in ("x", "s", "c"):
+        np.testing.assert_array_equal(
+            a[name].is_missing(), b[name].is_missing(), err_msg=name
+        )
+        assert a[name].read().tolist() == b[name].read().tolist()
