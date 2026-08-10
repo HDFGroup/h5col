@@ -111,7 +111,7 @@ kind of column is easier to write against than one type per column.
 
 ### Turning it off
 
-Pass `masked=False` to get get plain arrays:
+Pass `masked=False` to get plain arrays:
 
 ```python
 table.read(masked=False)
@@ -127,7 +127,7 @@ works the same way on
 
 ### Two habits worth picking up
 
-Use `.tolist()`, not `list()`.They differ, and only one of them does what
+Use `.tolist()`, not `list()`. They differ, and only one of them does what
 you probably want:
 
 ```python
@@ -146,7 +146,7 @@ list(table["t_air"].read())
 [np.float32(21.5), masked, np.float32(23.1)]
 ```
 
-`.tolist()` turns a missing row into `None`. Plain `list()` includes the NumPy's
+`.tolist()` turns a missing row into `None`. Plain `list()` gives NumPy's
 `masked` marker, which is not `None` and will not compare equal to it. If you
 have code that tests `if value is None`, reach for `.tolist()`.
 
@@ -171,6 +171,11 @@ table["t_air"].read().filled()
 array([  21.5, -999. ,   23.1], dtype=float32)
 ```
 
+Default NumPy printing of masked array values shows all the sigits, whereas for
+plain arrays it asjust based on the dtype. The numbers are identical and only
+the display changed, but if you are showing values to somebody, rounding first
+is worth the trouble. `.tolist()` behaves the same way.
+
 One small oddity: for a column with no missing rows at all, the
 `fill_value` shown in the array's display is a NumPy placeholder such as
 `'N/A'` rather than the column's own. It is never used, `.filled()` on an
@@ -194,9 +199,9 @@ table["station"].read().tolist()
 separate Python string object for every row. It supports comparing, sorting, and
 finding unique values. However, one consequence of the NumPy implementation is
 that the text is only checked for valid UTF-8 when reading specific values out,
-not when storing the column's stings into the array. If a string contains
-invalid bytes, the error only if that particular value is accessed . String
-columns written by `h5col` cannot get into this state, because there are checks
+not when the column is read into the array. If a string contains invalid
+bytes, the error appears only when that particular value is accessed. String
+columns written by `h5col` cannot get into this state because there are checks
 on the way in.
 
 ## Categorical columns
