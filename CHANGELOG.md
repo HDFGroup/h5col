@@ -41,6 +41,24 @@ to follow [Semantic Versioning](https://semver.org/).
 - `Column.read_rows(rows)` reads just the given rows, decoded, using
   coalesced chunk-aligned block reads. Rows may be in any order and may
   repeat.
+- **Arrow export** — `Table.to_arrow()`, `Column.to_arrow()` and
+  `Selection.to_arrow()`, behind the optional `pyarrow` dependency
+  (`pip install h5col[arrow]`). This is the one representation that carries the
+  whole H5Col data model, because NumPy has no type for three of the things
+  H5Col stores:
+  - missing rows become real Arrow nulls, so the fill value never reaches a
+    consumer as data;
+  - a categorical becomes a `DictionaryArray` of exactly the codes and labels
+    already on disk, rather than being expanded to one label per row;
+  - a list column keeps its nulls at every level of nesting, including an inner
+    null no top-level mask can express.
+
+  Numeric columns hand their data buffer to Arrow unchanged. Fixed-length
+  string columns are converted to `large_string` — a fixed-width column has no
+  offsets to lend — with the offsets computed by array arithmetic rather than a
+  Python loop. Each column's `units`, `description`, `valid_min`, `valid_max`
+  and (for categoricals) `ordered` attributes ride along as Arrow field
+  metadata under an `h5col.` prefix, and survive a Parquet round trip.
 
 ### Changed
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import numpy as np
 import numpy.typing as npt
 
-from . import categorical, indexes, missing
+from . import arrow, categorical, indexes, missing
 from ._hdf5 import gather_rows, read_str_attr
 from .booleans import decode_bool, is_bool_dtype
 from .reserved import (
@@ -147,6 +147,36 @@ class Column:
         a = self._ds.attrs
         return a[ATTR_VALID_MAX] if ATTR_VALID_MAX in a else None
 
+    def _raw_block(self, rows: Any = None) -> npt.NDArray[Any]:
+        """The stored values for *rows*, or all of ``[0, NROWS)`` when None.
+
+        Shared by every reader — decoded, masked or Arrow — so they agree on
+        which rows exist and how a scattered selection is fetched.
+
+        Raises
+        ------
+        IndexError
+            If a row position is negative or not below ``NROWS``.
+        ValueError
+            If *rows* is not one-dimensional.
+        """
+        n = self._table.nrows
+        if rows is None:
+            return self._ds[0:n]
+        idx = np.asarray(rows, dtype=np.int64)
+        if idx.ndim != 1:
+            raise ValueError(f"rows must be a 1-D sequence, got {idx.ndim}-D")
+        if idx.size and (int(idx.min()) < 0 or int(idx.max()) >= n):
+            raise IndexError(
+                f"row positions must lie in [0, {n}) for column {self.name!r}"
+            )
+        # gather_rows needs ascending input; restore the caller's order after.
+        order = np.argsort(idx, kind="stable")
+        raw = gather_rows(self._ds, idx[order], n)
+        restored = np.empty_like(raw)
+        restored[order] = raw
+        return restored
+
     def _decode(self, raw: npt.NDArray[Any]) -> npt.NDArray[Any]:
         """Decode stored values to friendly ones.
 
@@ -222,8 +252,7 @@ class Column:
             array, in which case a missing row holds the column's fill value
             with nothing to distinguish it from data.
         """
-        n = self._table.nrows
-        raw = self._ds[0:n]
+        raw = self._raw_block()
         decoded = self._decode(raw)
         return self._mask(raw, decoded) if masked else decoded
 
@@ -256,21 +285,21 @@ class Column:
         ValueError
             If *rows* is not one-dimensional.
         """
-        idx = np.asarray(rows, dtype=np.int64)
-        if idx.ndim != 1:
-            raise ValueError(f"rows must be a 1-D sequence, got {idx.ndim}-D")
-        n = self._table.nrows
-        if idx.size and (int(idx.min()) < 0 or int(idx.max()) >= n):
-            raise IndexError(
-                f"row positions must lie in [0, {n}) for column {self.name!r}"
-            )
-        # gather_rows needs ascending input; restore the caller's order after.
-        order = np.argsort(idx, kind="stable")
-        raw = gather_rows(self._ds, idx[order], n)
-        restored = np.empty_like(raw)
-        restored[order] = raw
-        decoded = self._decode(restored)
-        return self._mask(restored, decoded) if masked else decoded
+        raw = self._raw_block(rows)
+        decoded = self._decode(raw)
+        return self._mask(raw, decoded) if masked else decoded
+
+    def to_arrow(self, rows: Any = None) -> Any:
+        """Convert the column to an Arrow array, or just *rows* of it.
+
+        Missing rows become real Arrow nulls rather than the fill value, and a
+        categorical column becomes a ``DictionaryArray`` of the codes and
+        labels H5Col already stores — neither of which NumPy can express.
+
+        Needs the optional ``pyarrow`` dependency (``pip install
+        h5col[arrow]``).
+        """
+        return arrow.column_array(self, rows)
 
     @property
     def search_indexes(self) -> list[SearchIndex]:

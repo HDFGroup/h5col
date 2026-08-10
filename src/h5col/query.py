@@ -1008,6 +1008,15 @@ class Selection:
                 out[name] = [full[int(i)] for i in rows]
         return out
 
+    def to_arrow(self, columns: Any = None) -> Any:
+        """Convert the selected rows to a :class:`pyarrow.Table`.
+
+        As :meth:`h5col.Table.to_arrow`, restricted to the matching rows.
+        """
+        from . import arrow
+
+        return arrow.table_arrow(self._table, columns, self.row_positions)
+
     def explain(self) -> QueryPlan:
         """The :class:`QueryPlan` describing how this selection was evaluated."""
         self._ensure()

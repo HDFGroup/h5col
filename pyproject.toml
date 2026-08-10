@@ -18,6 +18,10 @@ dependencies = [
     "pydantic>=2.5",
 ]
 
+[project.optional-dependencies]
+# `to_arrow()` only. Everything else works without it.
+arrow = ["pyarrow>=15"]
+
 [project.urls]
 Documentation = "https://hdfgroup.github.io/h5col/"
 Repository = "https://github.com/HDFGroup/h5col"
@@ -52,6 +56,9 @@ h5col = { path = ".", editable = true }
 pytest = ">=8"
 ruff = ">=0.6"
 mypy = ">=1.10"
+# For the to_arrow() tests. The suite skips them when it is absent, so a
+# pip install without the `arrow` extra still runs green.
+pyarrow = ">=15"
 
 # Tooling for the example notebooks under `examples/` (kept out of the lean
 # test/lint `dev` environment).
@@ -129,7 +136,7 @@ disallow_any_generics = false
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["h5py.*", "hdf5plugin.*"]
+module = ["h5py.*", "hdf5plugin.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

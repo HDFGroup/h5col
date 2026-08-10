@@ -14,7 +14,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from . import categorical, indexes, lists, query, references
+from . import arrow, categorical, indexes, lists, query, references
 from ._hdf5 import (
     create_column_dataset,
     extend_to,
@@ -759,6 +759,29 @@ class Table:
                 col.read() if isinstance(col, ListColumn) else col.read(masked=masked)
             )
         return out
+
+    def to_arrow(
+        self, columns: Sequence[str] | None = None, *, where: Any = None
+    ) -> Any:
+        """Convert the table (default all columns) to a :class:`pyarrow.Table`.
+
+        The one export that carries the whole H5Col data model: missing rows
+        become real Arrow nulls instead of the fill value, a categorical becomes
+        a dictionary of the codes and labels already stored, a list column keeps
+        its nulls at every level of nesting, and each column's ``units``,
+        ``description`` and valid-range attributes ride along as Arrow field
+        metadata under an ``h5col.`` prefix.
+
+        Needs the optional ``pyarrow`` dependency (``pip install h5col[arrow]``).
+
+        Raises
+        ------
+        KeyError
+            If a requested column name is not a column of the table.
+        """
+        if where is not None:
+            return self.select(where).to_arrow(columns)
+        return arrow.table_arrow(self, columns)
 
     def select(self, where: Any = None) -> query.Selection:
         """Build a lazy :class:`~h5col.query.Selection` over the table.
