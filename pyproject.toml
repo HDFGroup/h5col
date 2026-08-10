@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "h5col"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reference implementation of the H5Col convention (HEP001): column-oriented tabular data in HDF5."
 readme = "README.md"
 requires-python = ">=3.11"
