@@ -19,6 +19,7 @@ numeric                the matching primitive, data buffer shared
 boolean                ``bool_``
 fixed-length string    ``large_string``
 categorical            ``dictionary<indices=<code dtype>, values=...>``
+list column            ``large_list<...>``, buffers shared
 =====================  =========================================
 
 Missing rows become real Arrow nulls in every case, so an Arrow consumer never
@@ -29,12 +30,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import h5py
 import numpy as np
 import numpy.typing as npt
 
-from . import categorical
-from .booleans import decode_bool
-from .reserved import ATTR_DESCRIPTION, ATTR_UNITS, ATTR_VALID_MAX, ATTR_VALID_MIN
+from . import categorical, missing
+from ._hdf5 import read_str_attr
+from .booleans import decode_bool, is_bool_dtype
+from .exceptions import ConformanceError
+from .reserved import (
+    ATTR_CLASS,
+    ATTR_DESCRIPTION,
+    ATTR_UNITS,
+    ATTR_VALID_MAX,
+    ATTR_VALID_MIN,
+    CLASS_LIST_COLUMN,
+    CLASS_STRING_VALUES,
+    MEMBER_CHARS,
+    MEMBER_MASK,
+    MEMBER_OFFSETS,
+    MEMBER_VALUES,
+)
 from .strings import FixedString
 
 if TYPE_CHECKING:
@@ -62,6 +78,21 @@ def require_pyarrow() -> Any:
             "conda-forge pyarrow`."
         ) from exc
     return pa
+
+
+def _native(raw: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """*raw* in native byte order, for Arrow, which rejects byte-swapped input.
+
+    h5py hands back the file's byte order rather than normalizing it, and
+    big-endian datasets are ordinary in this corner of the world — NetCDF-4,
+    Fortran and IDL producers all write them. H5Col reads them fine, so the
+    Arrow export must too. A no-op on native data.
+    """
+    # isnative covers both cases that need nothing done: already native, and
+    # dtypes with no byte order to speak of (S, bool, enum).
+    if raw.dtype.isnative:
+        return raw
+    return raw.astype(raw.dtype.newbyteorder("="), copy=False)
 
 
 def _validity(mask: npt.NDArray[np.bool_]) -> Any:
@@ -134,7 +165,7 @@ def column_array(col: Column, rows: Any = None) -> Any:
         return string_array(raw, nbytes, mask)
     if col.is_boolean:
         return pa.array(decode_bool(raw), mask=mask)
-    return pa.array(raw, mask=mask)
+    return pa.array(_native(raw), mask=mask)
 
 
 def column_metadata(col: Column) -> dict[str, str]:
@@ -190,10 +221,11 @@ def table_arrow(table: Any, columns: Any = None, rows: Any = None) -> Any:
             raise KeyError(name)
         col = cols[name]
         if isinstance(col, ListColumn):
-            values = col.read()
+            # Wrap the whole column, then take: a subset of offsets cannot be
+            # shared, and Arrow's take over a large_list beats rebuilding them.
+            array = list_array(col.group, table.nrows)
             if rows is not None:
-                values = [values[int(i)] for i in rows]
-            array = pa.array(values)
+                array = array.take(pa.array(np.asarray(rows, dtype=np.int64)))
             meta = list_column_metadata(col)
         else:
             array = column_array(col, rows)
@@ -201,3 +233,147 @@ def table_arrow(table: Any, columns: Any = None, rows: Any = None) -> Any:
         arrays.append(array)
         fields.append(pa.field(name, array.type, metadata=meta or None))
     return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
+
+
+# --------------------------------------------------------------------------- #
+# List columns
+#
+# These are the case Arrow fits best. H5Col already stores a list column the way
+# Arrow lays one out — an OFFSETS array plus a values buffer — so almost nothing
+# is converted; the buffers are handed over as they are. The exceptions are the
+# null masks, which H5Col keeps as one byte per element and Arrow as one bit.
+# --------------------------------------------------------------------------- #
+#: Largest offset the uint64 → int64 reinterpret can carry. Beyond it the value
+#: reads as negative, which Arrow does not check and which crashes on use.
+_MAX_OFFSET = 2**63 - 1
+
+
+def _offsets_buffer(ds: Any, count: int) -> Any:
+    """H5Col's uint64 OFFSETS as Arrow's int64 offsets buffer.
+
+    Same width, so the reinterpret is a view rather than a conversion. The
+    signed reading is why the Arrow types here are the ``large_`` variants.
+
+    The convention's invariants are checked here rather than left to Arrow.
+    ``Array.from_buffers`` validates almost nothing, so a malformed OFFSETS —
+    a half-written file whose tail is still zero, say — builds an array happily
+    and then aborts the process when something reads it. Checking costs a pass
+    over an array we have just read.
+
+    Raises
+    ------
+    ConformanceError
+        If OFFSETS is the wrong datatype or length, does not start at zero, is
+        not monotonically non-decreasing, or exceeds the signed range.
+    """
+    pa = require_pyarrow()
+    raw = ds[0 : count + 1]
+    if raw.dtype != np.uint64:
+        raise ConformanceError(
+            f"{ds.name!r}: list-column OFFSETS must be uint64, got {raw.dtype}"
+        )
+    if raw.shape[0] != count + 1:
+        raise ConformanceError(
+            f"{ds.name!r}: OFFSETS must hold {count + 1} entries for {count} rows, "
+            f"found {raw.shape[0]}"
+        )
+    if count >= 0 and raw.shape[0] and raw[0] != 0:
+        raise ConformanceError(f"{ds.name!r}: OFFSETS[0] must be 0, got {raw[0]}")
+    if raw.shape[0] > 1:
+        bad = np.flatnonzero(raw[1:] < raw[:-1])
+        if bad.size:
+            i = int(bad[0])
+            raise ConformanceError(
+                f"{ds.name!r}: OFFSETS must not decrease, but entry {i + 1} "
+                f"({raw[i + 1]}) is below entry {i} ({raw[i]})"
+            )
+        if int(raw[-1]) > _MAX_OFFSET:
+            raise ConformanceError(
+                f"{ds.name!r}: final OFFSETS entry {raw[-1]} exceeds the signed "
+                "64-bit range Arrow offsets use"
+            )
+    return pa.py_buffer(raw.view(np.int64))
+
+
+def _element_mask(ds: Any, raw: npt.NDArray[Any]) -> npt.NDArray[np.bool_]:
+    """Missing-element mask for a leaf VALUES dataset.
+
+    Gated on ``H5D_FILL_VALUE_USER_DEFINED`` exactly as a column's is, so h5py's
+    library-default fill value is never mistaken for a H5Col sentinel.
+    """
+    if is_bool_dtype(ds.dtype) or ds.id.get_create_plist().fill_value_defined() != 2:
+        return np.zeros(raw.shape[0], dtype=np.bool_)
+    return missing.is_missing(raw, ds.fillvalue)
+
+
+def _leaf_array(ds: Any, count: int) -> Any:
+    """A leaf VALUES dataset as an Arrow array.
+
+    A leaf may be any datatype a column may be except a variable-length one, so
+    this covers the fixed-length string and boolean cases as well as numerics.
+    """
+    pa = require_pyarrow()
+    raw = ds[0:count]
+    mask = _element_mask(ds, raw)
+    if FixedString.is_fixed_string(ds.dtype):
+        return string_array(raw, FixedString.from_dtype(ds.dtype).nbytes, mask)
+    if is_bool_dtype(ds.dtype):
+        return pa.array(decode_bool(raw), mask=mask)
+    return pa.array(_native(raw), mask=mask)
+
+
+def _string_values_array(group: Any, count: int) -> Any:
+    """A STRING_VALUES group as an Arrow ``large_string``.
+
+    H5Col's OFFSETS plus a UTF-8 CHARS buffer is precisely Arrow's string
+    layout, so both buffers go across untouched.
+    """
+    pa = require_pyarrow()
+    chars = group[MEMBER_CHARS]
+    if chars.dtype != np.uint8:
+        raise ConformanceError(
+            f"{chars.name!r}: STRING_VALUES CHARS must be uint8, got {chars.dtype}; "
+            "the OFFSETS index bytes, so any other width misreads every value"
+        )
+    nbytes = int(group[MEMBER_OFFSETS][count])
+    buffers = [
+        _mask_validity(group, count),
+        _offsets_buffer(group[MEMBER_OFFSETS], count),
+        pa.py_buffer(chars[0:nbytes]),
+    ]
+    return pa.Array.from_buffers(pa.large_string(), count, buffers)
+
+
+def _mask_validity(group: Any, count: int) -> Any:
+    """The group's MASK member as an Arrow validity bitmap, or None if absent."""
+    if MEMBER_MASK not in group:
+        return None
+    return _validity(~decode_bool(group[MEMBER_MASK][0:count]))
+
+
+def _values_array(obj: Any, count: int) -> Any:
+    """Whichever of the three VALUES forms *obj* is, as an Arrow array."""
+    if isinstance(obj, h5py.Dataset):
+        return _leaf_array(obj, count)
+    cls = read_str_attr(obj, ATTR_CLASS)
+    if cls == CLASS_STRING_VALUES:
+        return _string_values_array(obj, count)
+    if cls == CLASS_LIST_COLUMN:
+        return list_array(obj, count)
+    raise ConformanceError(f"{obj.name!r}: VALUES group has unexpected CLASS {cls!r}")
+
+
+def list_array(group: Any, count: int) -> Any:
+    """One level of a list column as an Arrow ``large_list``.
+
+    Recurses through nesting, so an inner null — which no top-level mask can
+    express — survives at whatever depth it was written.
+    """
+    pa = require_pyarrow()
+    child = _values_array(group[MEMBER_VALUES], int(group[MEMBER_OFFSETS][count]))
+    return pa.Array.from_buffers(
+        pa.large_list(child.type),
+        count,
+        [_mask_validity(group, count), _offsets_buffer(group[MEMBER_OFFSETS], count)],
+        children=[child],
+    )

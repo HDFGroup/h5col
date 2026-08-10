@@ -53,12 +53,23 @@ to follow [Semantic Versioning](https://semver.org/).
   - a list column keeps its nulls at every level of nesting, including an inner
     null no top-level mask can express.
 
-  Numeric columns hand their data buffer to Arrow unchanged. Fixed-length
+    Numeric columns hand their data buffer to Arrow unchanged. Fixed-length
   string columns are converted to `large_string` — a fixed-width column has no
   offsets to lend — with the offsets computed by array arithmetic rather than a
   Python loop. Each column's `units`, `description`, `valid_min`, `valid_max`
-  and (for categoricals) `ordered` attributes ride along as Arrow field
-  metadata under an `h5col.` prefix, and survive a Parquet round trip.
+  and (for categoricals) `ordered` attributes ride along as Arrow field metadata
+  under an `h5col.` prefix, and survive a Parquet round trip.
+
+    List columns are the case Arrow fits best because H5Col already stores them
+  in the Arrow layout. `OFFSETS` (uint64) is reinterpreted as Arrow's int64
+  offsets without touching the memory, and a `STRING_VALUES` group's `CHARS`
+  goes across as the string payload. Only the null masks are converted, from
+  H5Col's byte per row to Arrow's bit. Arrow rejects byte-swapped input, so a
+  big-endian dataset could not be exported at all although `validate()` accepted
+  it and `read()` decoded it. Normalise to native byte order first. This also
+  fixes the scalar path, where the same defect predates this change. Against the
+  Python `read()` at 200,000 rows this is 19x for `list<float64>`, 33x for
+  `list<string>` and 26x for `list<list<float64>>`.
 
 ### Changed
 

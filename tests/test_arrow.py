@@ -19,6 +19,9 @@ from h5col import (
 
 pa = pytest.importorskip("pyarrow", reason="the arrow extra is not installed")
 
+from h5col.arrow import _offsets_buffer, string_array  # noqa: E402
+from h5col.exceptions import ConformanceError  # noqa: E402
+
 
 def _table(h5file: h5py.File) -> Table:
     t = Table.create(
@@ -105,7 +108,6 @@ def test_boolean_column(h5file: h5py.File) -> None:
 def test_string_export_matches_the_decode_oracle(value: str) -> None:
     fs = FixedString(nbytes=12)
     raw = np.asarray(fs.encode([value]))
-    from h5col.arrow import string_array
 
     got = string_array(raw, 12, np.zeros(1, dtype=bool)).to_pylist()
     assert got == list(fs.decode(raw))
@@ -195,7 +197,7 @@ def test_empty_table(h5file: h5py.File) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# List columns (provisional in this phase: built by conversion, not by wrapping)
+# List columns: H5Col's storage is Arrow's layout, so the buffers are shared
 # --------------------------------------------------------------------------- #
 def test_list_columns(h5file: h5py.File) -> None:
     t = Table.create(
@@ -236,3 +238,226 @@ def test_arrow_agrees_with_the_masked_read(h5file: h5py.File) -> None:
     read = t.read()
     for name in t.column_names:
         assert tb[name].to_pylist() == read[name].tolist(), name
+
+
+def _list_table(h5file: h5py.File) -> Table:
+    """Every VALUES form the convention allows, with nulls at each level."""
+    t = Table.create(
+        h5file.create_group("lt"),
+        [
+            ColumnSpec(name="i", dtype="i8"),
+            ListColumnSpec(
+                name="xs",
+                values=LeafValuesSpec(dtype="f8", fill_value=-999.0),
+                nullable=True,
+            ),
+            ListColumnSpec(name="tags", values=StringValuesSpec()),
+            ListColumnSpec(name="flags", values=LeafValuesSpec(dtype="bool")),
+            ListColumnSpec(name="codes", values=LeafValuesSpec(dtype=FixedString(4))),
+            ListColumnSpec(
+                name="nest", values=NestedListSpec(values=LeafValuesSpec(dtype="f8"))
+            ),
+        ],
+    )
+    t.append(
+        {
+            "i": [1, 2, 3],
+            # A null row *and* a null element inside a row.
+            "xs": [[1.0, None], None, [3.0]],
+            "tags": [["red", "green"], [], ["blue"]],
+            "flags": [[True, False], [], [True]],
+            "codes": [["ab", "cd"], [], ["ef"]],
+            "nest": [[[1.0], [2.0, 3.0]], [], [[4.0]]],
+        }
+    )
+    return t
+
+
+def test_list_column_types(h5file: h5py.File) -> None:
+    tb = _list_table(h5file).to_arrow()
+    f64 = pa.large_list(pa.float64())
+    assert tb.schema.field("xs").type == f64
+    assert tb.schema.field("tags").type == pa.large_list(pa.large_string())
+    assert tb.schema.field("flags").type == pa.large_list(pa.bool_())
+    # A fixed-length string leaf is a string, not opaque bytes.
+    assert tb.schema.field("codes").type == pa.large_list(pa.large_string())
+    assert tb.schema.field("nest").type == pa.large_list(f64)
+
+
+def test_list_columns_match_the_python_read(h5file: h5py.File) -> None:
+    t = _list_table(h5file)
+    tb, read = t.to_arrow(), t.read()
+    for name in ("xs", "tags", "flags", "codes", "nest"):
+        assert tb[name].to_pylist() == read[name], name
+
+
+def test_inner_null_survives(h5file: h5py.File) -> None:
+    # No top-level mask can express a null *element* inside a present row.
+    tb = _list_table(h5file).to_arrow()
+    assert tb["xs"].to_pylist() == [[1.0, None], None, [3.0]]
+
+
+def test_list_buffers_are_shared_not_copied(h5file: h5py.File) -> None:
+
+    group = _list_table(h5file)["xs"].group
+    raw = group["OFFSETS"][0:4]
+    assert raw.dtype == np.uint64
+    # uint64 -> int64 is a reinterpret of the same memory, and py_buffer wraps
+    # rather than converts, so Arrow ends up pointing at the array h5py filled.
+    view = raw.view(np.int64)
+    assert view.__array_interface__["data"][0] == raw.__array_interface__["data"][0]
+    assert pa.py_buffer(view).address == raw.__array_interface__["data"][0]
+    assert _offsets_buffer(group["OFFSETS"], 3).size == raw.nbytes
+
+
+def test_arrow_table_outlives_the_hdf5_file(h5file: h5py.File, tmp_path) -> None:
+    # The buffers Arrow borrows are the arrays h5py read into, not mapped file
+    # pages, so closing the file must leave the table intact.
+    import gc
+
+    path = tmp_path / "own.h5"
+    with h5py.File(path, "w") as f:
+        _list_table(f)
+    handle = h5py.File(path, "r")
+    tb = Table.open(handle["lt"]).to_arrow()
+    expected = tb.to_pylist()
+    handle.close()
+    del handle
+    gc.collect()
+    assert tb.to_pylist() == expected
+
+
+def test_empty_list_column(h5file: h5py.File) -> None:
+    t = Table.create(
+        h5file.create_group("t"),
+        [ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="f8"))],
+    )
+    tb = t.to_arrow()
+    assert tb.num_rows == 0
+    assert tb.schema.field("xs").type == pa.large_list(pa.float64())
+
+
+def test_list_column_selection_takes_rows(h5file: h5py.File) -> None:
+    t = _list_table(h5file)
+    tb = t.select(field("i") > 1).to_arrow(["i", "xs"])
+    assert tb["i"].to_pylist() == [2, 3]
+    assert tb["xs"].to_pylist() == [None, [3.0]]
+
+
+def test_non_uint64_offsets_are_rejected(h5file: h5py.File) -> None:
+
+    g = h5file.create_group("g")
+    ds = g.create_dataset("OFFSETS", data=np.array([0, 1, 2], dtype="i4"))
+    with pytest.raises(ConformanceError, match="must be uint64"):
+        _offsets_buffer(ds, 2)
+
+
+# --------------------------------------------------------------------------- #
+# Malformed files must raise, never corrupt or abort
+# --------------------------------------------------------------------------- #
+def _one_list_column(h5file: h5py.File) -> Table:
+    t = Table.create(
+        h5file.create_group("t"),
+        [ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="f8"))],
+    )
+    t.append({"xs": [[1.0, 2.0], [3.0, 4.0], [5.0]]})
+    return t
+
+
+@pytest.mark.parametrize(
+    ("offsets", "message"),
+    [
+        # The half-written file: a tail still zero. Arrow builds this happily
+        # and then aborts the process when anything reads it.
+        ([0, 2, 4, 0], "must not decrease"),
+        ([1, 2, 4, 5], r"OFFSETS\[0\] must be 0"),
+        ([0, 4, 2, 5], "must not decrease"),
+        ([0, 2, 4, 2**63], "exceeds the signed"),
+    ],
+)
+def test_malformed_offsets_raise(
+    h5file: h5py.File, offsets: list[int], message: str
+) -> None:
+
+    t = _one_list_column(h5file)
+    t["xs"].group["OFFSETS"][:] = np.array(offsets, dtype="u8")
+    with pytest.raises(ConformanceError, match=message):
+        t.to_arrow()
+
+
+def test_short_offsets_raise(h5file: h5py.File) -> None:
+
+    ds = h5file.create_group("g").create_dataset(
+        "OFFSETS", data=np.array([0, 1], dtype="u8")
+    )
+    with pytest.raises(ConformanceError, match="must hold 4 entries"):
+        _offsets_buffer(ds, 3)
+
+
+def test_non_uint8_chars_raise(h5file: h5py.File) -> None:
+
+    t = Table.create(
+        h5file.create_group("t"),
+        [ListColumnSpec(name="tags", values=StringValuesSpec())],
+    )
+    t.append({"tags": [["red"], ["blue"]]})
+    sv = t["tags"].group["VALUES"]
+    data = sv["CHARS"][...]
+    del sv["CHARS"]
+    sv.create_dataset("CHARS", data=data.astype("u4"))
+    with pytest.raises(ConformanceError, match="CHARS must be uint8"):
+        t.to_arrow()
+
+
+# --------------------------------------------------------------------------- #
+# Byte order: h5py hands back the file's, Arrow refuses anything but native
+# --------------------------------------------------------------------------- #
+def test_big_endian_columns_export(h5file: h5py.File) -> None:
+    t = Table.create(
+        h5file.create_group("t"),
+        [
+            ColumnSpec(name="s", dtype=">i4"),
+            ListColumnSpec(
+                name="xs", values=LeafValuesSpec(dtype=">f8"), nullable=True
+            ),
+        ],
+    )
+    t.append({"s": [1, 2, 3], "xs": [[1.5, 2.5], [], None]})
+    tb = t.to_arrow()
+    assert tb["s"].to_pylist() == [1, 2, 3]
+    assert tb["xs"].to_pylist() == [[1.5, 2.5], [], None]
+    assert tb["xs"].to_pylist() == t.read()["xs"]
+
+
+# --------------------------------------------------------------------------- #
+# Mask packing: the validity bitmap is bits, so row counts off a multiple of 8
+# are where padding errors would hide
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("nrows", [1, 7, 8, 9, 63, 64, 65])
+def test_null_positions_survive_bit_packing(h5file: h5py.File, nrows: int) -> None:
+    rows: list[list[float] | None] = [
+        None if i % 3 == 0 else [float(i)] for i in range(nrows)
+    ]
+    t = Table.create(
+        h5file.create_group("t"),
+        [ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="f8"), nullable=True)],
+    )
+    t.append({"xs": rows})
+    assert t.to_arrow()["xs"].to_pylist() == rows == t.read()["xs"]
+
+
+def test_single_null_at_every_position(h5file: h5py.File) -> None:
+    # A polarity error cannot hide behind symmetry if the one null moves.
+    for pos in range(8):
+        g = h5file.create_group(f"t{pos}")
+        rows = [None if i == pos else [float(i)] for i in range(8)]
+        t = Table.create(
+            g,
+            [
+                ListColumnSpec(
+                    name="xs", values=LeafValuesSpec(dtype="f8"), nullable=True
+                )
+            ],
+        )
+        t.append({"xs": rows})
+        assert t.to_arrow()["xs"].to_pylist() == rows, pos
