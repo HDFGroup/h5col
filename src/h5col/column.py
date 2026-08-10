@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
@@ -29,6 +30,13 @@ class Column:
 
     Reads decode to friendly Python values: fixed-length strings become ``str``,
     boolean columns become NumPy ``bool``, and numeric columns pass through.
+
+    Rows can be read by subscript — ``column[17:98]``, ``column[-1]``,
+    ``column[[3, 1]]`` — which is :meth:`read_rows` with its defaults. Note
+    that ``column[...]`` and ``column.dataset[...]`` are not the same read:
+    the second goes straight to h5py, so it skips decoding and can return rows
+    above ``NROWS`` that :meth:`~h5col.Table.truncate` left behind as reserved
+    storage.
     """
 
     is_list = False
@@ -36,6 +44,65 @@ class Column:
     def __init__(self, dataset: Any, table: Table) -> None:
         self._ds = dataset
         self._table = table
+
+    def __len__(self) -> int:
+        """The number of rows in the column, which is the table's ``NROWS``."""
+        return int(self._table.nrows)
+
+    def __iter__(self) -> Iterator[Any]:
+        """Iterate the decoded rows.
+
+        Defined so that iterating reads the column once. Without it Python
+        falls back on :meth:`__getitem__` and fetches every row separately,
+        which is one HDF5 read per row.
+        """
+        return iter(self.read())
+
+    def __getitem__(self, key: Any) -> Any:
+        """Read rows by subscript, decoded and masked.
+
+        *key* may be an integer, a slice, a sequence of positions, or a boolean
+        array with one entry per row. An integer returns that one row's value —
+        :data:`numpy.ma.masked` if the row is missing — and every other key
+        returns an array, the way NumPy behaves. A negative position counts
+        back from the last row.
+
+        This is :meth:`read_rows` with the defaults. Subscript has nowhere to
+        put a keyword, so it always decodes and always masks; call
+        :meth:`read` or :meth:`read_rows` when you want ``masked=False``.
+
+        Raises
+        ------
+        IndexError
+            If a row position is out of range, a boolean mask is the wrong
+            length, or *key* is a tuple.
+        TypeError
+            If *key* holds values that are neither integers nor booleans.
+        """
+        if isinstance(key, tuple):
+            raise IndexError(
+                f"a column is one-dimensional and takes one index; got a "
+                f"{len(key)}-tuple for column {self.name!r}"
+            )
+        if isinstance(key, (bool, np.bool_)):
+            raise TypeError(
+                f"a single boolean is not a row selection for column "
+                f"{self.name!r}; pass a mask with one entry per row"
+            )
+        if isinstance(key, (int, np.integer)):
+            n = self._table.nrows
+            pos = int(key)
+            if pos < 0:
+                pos += n
+            if not 0 <= pos < n:
+                raise IndexError(
+                    f"row {int(key)} is out of range for column {self.name!r}, "
+                    f"which has {n} rows"
+                )
+            # One row still goes through the slice path, so it is one hyperslab
+            # rather than a gather.
+            return self.read_rows(slice(pos, pos + 1))[0]
+        return self.read_rows(key)
 
     def __repr__(self) -> str:
         try:

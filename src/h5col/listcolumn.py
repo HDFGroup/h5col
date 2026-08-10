@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
 from . import lists
-from ._hdf5 import read_str_attr
+from ._hdf5 import read_str_attr, row_positions
 from .booleans import decode_bool
 from .reserved import (
     ATTR_DESCRIPTION,
@@ -35,6 +36,53 @@ class ListColumn:
     def __init__(self, group: Any, table: Table) -> None:
         self._g = group
         self._table = table
+
+    def __len__(self) -> int:
+        """The number of rows in the column, which is the table's ``NROWS``."""
+        return int(self._table.nrows)
+
+    def __iter__(self) -> Iterator[Any]:
+        """Iterate the rows, each a list or ``None``."""
+        return iter(self.read())
+
+    def __getitem__(self, key: Any) -> Any:
+        """Read rows by subscript, the same keys a scalar column takes.
+
+        An integer returns one row — a list, or ``None`` if the row is null —
+        and every other key returns a list of rows. Negative positions count
+        back from the last row.
+
+        Be aware that this reads the whole column and then narrows it, unlike
+        a scalar column, which reads only the rows asked for. A list column's
+        rows are found through its ``OFFSETS``, and reading a range of those
+        directly is not implemented yet. The answer is the same; the cost is
+        not. :meth:`~h5col.Table.to_arrow` is the cheaper route to part of a
+        large list column.
+
+        Raises
+        ------
+        IndexError
+            If a row position is out of range, a boolean mask is the wrong
+            length, or *key* is a tuple.
+        TypeError
+            If *key* holds values that are neither integers nor booleans.
+        """
+        if isinstance(key, tuple):
+            raise IndexError(
+                f"a column is one-dimensional and takes one index; got a "
+                f"{len(key)}-tuple for column {self.name!r}"
+            )
+        if isinstance(key, (bool, np.bool_)):
+            raise TypeError(
+                f"a single boolean is not a row selection for column "
+                f"{self.name!r}; pass a mask with one entry per row"
+            )
+        if isinstance(key, (int, np.integer)):
+            # Wrapped in a list so a bare integer gets the same range check,
+            # and the same message, as one inside a sequence.
+            positions = row_positions([int(key)], self._table.nrows, self.name)
+            return self.read()[int(positions[0])]
+        return self.read_rows(key)
 
     def __repr__(self) -> str:
         try:
@@ -83,6 +131,23 @@ class ListColumn:
         :class:`numpy.ma.MaskedArray`. It already spells a null row ``None``.
         """
         return lists.read_list_column(self._g, self._table.nrows)
+
+    def read_rows(self, rows: Any, *, masked: bool = True) -> list[Any]:
+        """Read just *rows*, in the order given, as a list of (list | None).
+
+        Accepts the same row specs as :meth:`Column.read_rows` — a slice, a
+        sequence of positions, or a boolean mask — so a caller can select rows
+        the same way whatever kind of column it holds. ``masked`` is accepted
+        and ignored, as it is by :meth:`read`.
+
+        The whole column is read and then narrowed; see :meth:`__getitem__`
+        for why.
+        """
+        if isinstance(rows, slice):
+            return self.read()[rows]
+        positions = row_positions(rows, self._table.nrows, self.name)
+        full = self.read()
+        return [full[int(i)] for i in positions]
 
     def is_missing(self) -> npt.NDArray[np.bool_]:
         """Boolean mask of null-list rows over ``[0, NROWS)``.

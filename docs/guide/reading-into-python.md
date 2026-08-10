@@ -331,19 +331,33 @@ which fetch only the chunks they need. The [queries](../queries/index.md)
 section covers selection properly.
 
 `read_rows` takes whatever describes the rows you want — a slice, a list of
-positions, or a boolean array with one entry per row:
+positions, or a boolean array with one entry per row — and subscript is the
+shorter spelling of the same thing:
 
 ```python
 col = table["t_air"]
-col.read_rows(slice(17, 98))   # a range
-col.read_rows([-1, -2])        # the last two rows
-col.read_rows(col.is_missing())  # only the missing ones
+col[17:98]            # a range
+col[-1]               # one value, not an array of one
+col[[3, 1, 3]]        # any order, repeats allowed
+col[col.is_missing()] # only the missing rows
 ```
 
 A range is read in a single pass, so asking for part of a column really is
-cheaper than asking for all of it. Positions may be listed in any order and may
-repeat, and a negative one counts back from the last row, the way it does in a
-slice.
+cheaper than asking for all of it. A negative position counts back from the
+last row, the way it does in a slice. An integer key returns that row's value
+on its own — `numpy.ma.masked` if the row is missing — while every other key
+returns an array, which is how NumPy behaves.
+
+Subscript has nowhere to put a keyword, so it always decodes and always masks.
+Reach for `read` or `read_rows` when you want `masked=False`. List columns take
+the same keys, though they are read whole and then narrowed; `to_arrow` is the
+cheaper way into part of a large one.
+
+One thing to watch: `column[...]` and `column.dataset[...]` are a letter apart
+and are not the same read. The second goes straight to h5py, so it skips
+decoding, ignores missing values, and can hand back rows above `NROWS` that
+{meth}`~h5col.Table.truncate` left behind as reserved storage. Use it when you
+want the stored bytes and nothing else.
 
 **Arrow needs a dependency.** It is optional on purpose: a file written by
 `h5col` can be read with nothing but HDF5, and requiring a large package for

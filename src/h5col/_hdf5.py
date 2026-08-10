@@ -150,6 +150,11 @@ def row_positions(rows: Any, nrows: int, name: str) -> np.ndarray:
         If *rows* is not one-dimensional.
     """
     arr = np.asarray(rows)
+    if arr.ndim == 0:
+        raise TypeError(
+            f"{rows!r} is not a row selection for column {name!r}: use an "
+            f"integer, a slice, a sequence of positions, or a boolean mask"
+        )
     if arr.ndim != 1:
         raise ValueError(f"rows must be a 1-D sequence, got {arr.ndim}-D")
     if arr.dtype == np.bool_:

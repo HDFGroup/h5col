@@ -8,6 +8,30 @@ to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Columns read by subscript.** `column[17:98]`, `column[-1]`,
+  `column[[3, 1, 3]]` and `column[mask]` are `read_rows` with its defaults, so
+  a row selection reads the way it does in h5py and NumPy. An integer key
+  returns that row's value on its own — `numpy.ma.masked` when the row is
+  missing — and every other key returns an array. Subscript has nowhere to put
+  a keyword, so it always decodes and always masks; `read` and `read_rows`
+  remain the forms that take `masked=False`.
+
+  `len(column)` is the row count and iterating a column yields its decoded
+  rows, reading the column once rather than once per row. Note that having a
+  length makes a column with no rows falsy, as it does for a list or an h5py
+  dataset, so `if column:` now asks whether the column has rows rather than
+  whether the object exists.
+
+  List columns accept the same keys, and gained `read_rows` to match. They are
+  read whole and then narrowed, because a list column's rows are reached
+  through its `OFFSETS` and reading a range of those directly is not
+  implemented yet; `to_arrow` is the cheaper route into part of a large one.
+
+  Note that `column[...]` and `column.dataset[...]` are not the same read. The
+  second goes straight to h5py, so it skips decoding, ignores missing values,
+  and can return rows above `NROWS` that `truncate` left behind as reserved
+  storage.
+
 - **Row selections take slices, boolean masks and negative positions.**
   `Column.read_rows`, `Column.to_arrow` and everything built on them accept a
   slice (`read_rows(slice(17, 98))`), a boolean array with one entry per row
