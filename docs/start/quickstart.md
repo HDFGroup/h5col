@@ -87,17 +87,21 @@ unequal column lengths all raise before anything is committed.
 
 Reading decodes each column to friendly values: fixed-length strings come back
 as Python strings, categorical columns as their labels, booleans as NumPy
-booleans.
+booleans. Each one arrives as a {class}`numpy.ma.MaskedArray`, whose mask marks
+the rows that are missing, so `.tolist()` is the readable way to look at one:
 
 ```python
-table.read(["station", "kind"])
+result = table.read(["station", "kind"])
+result["kind"].tolist()
 ```
 
 ```text
-{'station': array(['KBOS', 'KJFK', 'KLGA', 'KDCA'], dtype=StringDType()),
- 'kind': array(['manned', 'automatic', 'automatic', None],
-               dtype=StringDType(na_object=None))}
+['manned', 'automatic', 'automatic', None]
 ```
+
+The mask is why the fourth `kind` shows as `None` rather than the code stored
+in its place. [Reading into Python](../guide/reading-into-python.md) covers this
+properly, including how to ask for plain arrays instead.
 
 Individual columns are reached by name. A categorical column also exposes its
 raw integer codes and its label array:
@@ -137,16 +141,15 @@ sel.count
 ```
 
 ```python
-sel.read(["station", "t_air"])
+sel.read(["station", "t_air"])["station"].tolist()
 ```
 
 ```text
-{'station': array(['KJFK', 'KLGA'], dtype=StringDType()),
- 't_air': array([24. , 23.1])}
+['KJFK', 'KLGA']
 ```
 
 A {class}`~h5col.Selection` is lazy — it evaluates once, on first use, and
-`read()` materializes only the requested columns for the matching rows.
+`read()` reads only the requested columns, and only the matching rows.
 
 Missing values follow three-valued logic, exactly as in SQL and pyarrow: a
 comparison against a missing value is unknown, and only rows where the whole
@@ -248,6 +251,7 @@ search index and compares contents.
   [column datatypes](../guide/column-types.md),
   [missing values](../guide/missing-values.md),
   [list columns](../guide/list-columns.md),
+  [reading in table data](../guide/reading-into-python.md),
   [filters](../guide/filters.md), and
   [search indexes](../guide/indexes.md).
 - [Queries](../queries/index.md) documents the full predicate syntax and the

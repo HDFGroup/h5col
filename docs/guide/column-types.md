@@ -47,7 +47,8 @@ silently truncated. If the data can outgrow the column, you find out at write
 time, not at analysis time.
 
 Reading decodes back to Python strings, in a NumPy array of
-`numpy.dtypes.StringDType`. The default
+`numpy.dtypes.StringDType` — see
+[Reading into Python](reading-into-python.md). The default
 fill value for a string column is the empty string, so an empty value reads
 as missing by default; if empty strings are meaningful data in your model,
 account for that when choosing the column's fill.
@@ -101,7 +102,8 @@ moves.
 The API works in labels, not codes. {meth}`~h5col.Table.append` takes label
 values. An unknown label raises {class}`~h5col.SchemaError`, and `None`
 marks a missing row. {meth}`Column.read <h5col.Column.read>` returns
-labels, with `None` where the code is the fill. The raw codes remain
+labels, with the missing rows marked in the mask (and shown as `None` by
+`.tolist()`); see [Reading into Python](reading-into-python.md). The raw codes remain
 available as {attr}`Column.codes <h5col.Column.codes>`, the labels as
 {attr}`Column.categories <h5col.Column.categories>`, and an optional
 `ordered` flag (for ordinal categories) round-trips through the spec and

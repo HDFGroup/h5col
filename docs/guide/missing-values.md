@@ -21,6 +21,11 @@ equal to itself, reduce to this one rule. The package applies it for you:
 mask over the logical rows, and {func}`h5col.is_missing` is the same test as
 a standalone function.
 
+Reading a table applies this for you: every column but a list column comes back
+as a masked array, so a missing row is skipped by an average rather than
+counted as its fill value. [Reading into Python](reading-into-python.md)
+explains the shape of everything a read hands back.
+
 ## Every column has a fill, chosen or recommended
 
 When a {class}`~h5col.ColumnSpec` does not set `fill_value`, the column
@@ -53,9 +58,9 @@ fill at all, and therefore must be provided in every append.
 For floating-point columns you will usually pick one of two styles.
 
 The sentinel style keeps missingness distinguishable from every computational
-outcome. A mean over values that accidentally include a NaN is poisoned,
+outcome. A mean over values that accidentally include a `NaN` is poisoned,
 while a sentinel that leaks into arithmetic is at least loud. It is also the
-only option for integer columns, which have no NaN:
+only option for integer columns, which have no `NaN`:
 
 ```python
 ColumnSpec(name="samples", dtype="int32", fill_value=-1, valid_min=0)
@@ -86,13 +91,13 @@ There are three ways a missing row comes to exist:
 - Append `None` in place of a value. Whatever the column's datatype, `None`
   is stored as that column's fill value, so a `None` in a sentinel-filled
   integer column becomes the sentinel and a `None` in a NaN-filled float
-  column becomes NaN. In a categorical column it becomes the fill code and
+  column becomes `NaN`. In a categorical column it becomes the fill code and
   reads back as `None`.
-- Write the fill value itself — NaN into a NaN-filled float column, the
+- Write the fill value itself. `NaN` into a NaN-filled float column, the
   sentinel into a sentinel-filled one. This is equivalent to writing `None`,
   and is often the natural form when the data already arrives as a NumPy
   array.
-- Omit the column from an append entirely: the column is extended and its new
+- Omit the column from an append entirely. The column is extended and its new
   rows keep the fill value.
 
 The exception is a column with no fill value to store. A boolean column declares

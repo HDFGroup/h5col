@@ -27,6 +27,12 @@ to follow [Semantic Versioning](https://semver.org/).
 - **Conformance validation** — `validate()` and the semantic `validate(deep=True)`.
 - Friendly `FixedString` handler for HDF5 fixed-length strings, and a full
   H5Col exception family rooted at `H5ColError`.
+- User guide chapter [Reading into
+  Python](https://hdfgroup.github.io/h5col/guide/reading-into-python.html),
+  covering
+  what each column type hands back from `read()` and `to_arrow()`, why missing
+  values arrive masked, `.tolist()` versus `list()`, which NumPy functions drop
+  a mask, and an honest section on where each form falls short.
 - Documentation site under `docs/` (Sphinx, Markdown via MyST, pydata theme),
   published to GitHub Pages: getting-started pages, a user guide, the query
   syntax reference, the rendered example notebooks, and an API reference. The

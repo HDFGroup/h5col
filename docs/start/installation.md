@@ -9,8 +9,7 @@ pure Python; all of its binary needs are covered by its dependencies.
 
 - Python ≥ 3.11
 - [h5py](https://docs.h5py.org/en/stable/) ≥ 3.11, built against HDF5 ≥ 2.1.0
-- [NumPy](https://numpy.org) ≥ 2.0 (string columns decode into its
-  `StringDType`)
+- [NumPy](https://numpy.org) ≥ 2.0
 - [hdf5plugin](https://pypi.org/project/hdf5plugin/) ≥ 4.0
 - [pydantic](https://docs.pydantic.dev) ≥ 2.5
 
