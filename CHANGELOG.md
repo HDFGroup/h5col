@@ -4,7 +4,7 @@ All notable changes to H5Col are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-11
 
 ### Added
 
@@ -83,6 +83,22 @@ to follow [Semantic Versioning](https://semver.org/).
   signature, is switched off by the numpy docstring convention. It is now named
   explicitly in the lint configuration so it runs, and the gate fails if a
   parameter description goes missing again.
+
+### Changed
+
+- The version is declared in one place. `pyproject.toml` now takes it from
+  `src/h5col/__init__.py` rather than repeating it, so the two cannot drift.
+  A `release-check` workflow runs on `v*` tags and fails when the
+  commit a tag points at does not report the version the tag claims, or when a
+  release tag carries a pre-release version.
+- The missing-value documentation no longer uses "sentinel". H5Col's marker for
+  a missing row is simply the column's fill value.The reference pages keep the
+  convention's own term, "the canonical missing-value test".
+- The [Reading into
+  Python](https://hdfgroup.github.io/h5col/guide/reading-into-python.html)
+  chapter gained a "Reading part of a column" section, so row selection is no
+  longer buried in a list of limitations, and its Arrow half is now titled to
+  match its NumPy half rather than reading as the chapter's conclusion.
 
 ### Fixed
 
