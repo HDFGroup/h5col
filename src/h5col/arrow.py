@@ -118,6 +118,16 @@ def string_array(
     Python loop: the trailing NULs HDF5 pads with are counted per row, the
     lengths accumulate into the offsets buffer, and the payload bytes are taken
     in one masked gather.
+
+    Parameters
+    ----------
+    raw:
+        The stored fixed-width bytes, one row per element.
+    nbytes:
+        The column's fixed width, i.e. the stored size of every row.
+    mask:
+        True where the row is missing. Masked rows become Arrow nulls and
+        contribute no payload bytes.
     """
     pa = require_pyarrow()
     n = raw.shape[0]
@@ -154,7 +164,18 @@ def _categorical_array(col: Column, raw: npt.NDArray[Any], mask: Any) -> Any:
 
 
 def column_array(col: Column, rows: Any = None) -> Any:
-    """Convert one scalar column (or *rows* of it) to an Arrow array."""
+    """Convert one scalar column (or *rows* of it) to an Arrow array.
+
+    Parameters
+    ----------
+    col:
+        The scalar column to convert. List columns go through
+        :func:`list_array` instead.
+    rows:
+        Which rows to convert, in any form
+        :meth:`~h5col.Column.read_rows` accepts. None converts the whole
+        column.
+    """
     pa = require_pyarrow()
     raw = col._raw_block(rows)
     mask = col._missing_mask(raw)
@@ -174,6 +195,12 @@ def column_metadata(col: Column) -> dict[str, str]:
     Arrow metadata is a flat string-to-string map, so numeric attributes are
     rendered with ``str``. The keys are prefixed with ``h5col.`` and survive a
     Parquet round trip, which is what makes them worth carrying at all.
+
+    Parameters
+    ----------
+    col:
+        The scalar column whose attributes are collected. Attributes that are
+        unset are simply left out.
     """
     meta: dict[str, str] = {}
     for key, value in (
@@ -190,7 +217,14 @@ def column_metadata(col: Column) -> dict[str, str]:
 
 
 def list_column_metadata(col: Any) -> dict[str, str]:
-    """A list column's HDF5 attributes, as Arrow field metadata."""
+    """A list column's HDF5 attributes, as Arrow field metadata.
+
+    Parameters
+    ----------
+    col:
+        The list column whose attributes are collected. Attributes that are
+        unset are simply left out.
+    """
     meta: dict[str, str] = {}
     for key, value in (
         (ATTR_UNITS, col.units),
@@ -223,6 +257,16 @@ def _select(pa: Any, array: Any, rows: Any, nrows: int, name: str) -> Any:
 
 def table_arrow(table: Any, columns: Any = None, rows: Any = None) -> Any:
     """Convert a table (or *rows* of it) to an Arrow table.
+
+    Parameters
+    ----------
+    table:
+        The table to convert.
+    columns:
+        Names to convert, in the order given. None converts every column.
+    rows:
+        Which rows to convert, as a slice, a sequence of positions, or a
+        boolean mask. None converts every row.
 
     Raises
     ------
@@ -385,6 +429,13 @@ def list_array(group: Any, count: int) -> Any:
 
     Recurses through nesting, so an inner null — which no top-level mask can
     express — survives at whatever depth it was written.
+
+    Parameters
+    ----------
+    group:
+        A list column group, or an inner nesting level of one.
+    count:
+        How many entries of this level to wrap, counted from row 0.
     """
     pa = require_pyarrow()
     child = _values_array(group[MEMBER_VALUES], int(group[MEMBER_OFFSETS][count]))

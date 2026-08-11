@@ -61,15 +61,20 @@ class Column:
     def __getitem__(self, key: Any) -> Any:
         """Read rows by subscript, decoded and masked.
 
-        *key* may be an integer, a slice, a sequence of positions, or a boolean
-        array with one entry per row. An integer returns that one row's value —
-        :data:`numpy.ma.masked` if the row is missing — and every other key
-        returns an array, the way NumPy behaves. A negative position counts
-        back from the last row.
+        An integer key returns that one row's value — :data:`numpy.ma.masked`
+        if the row is missing — and every other key returns an array, the way
+        NumPy behaves.
 
         This is :meth:`read_rows` with the defaults. Subscript has nowhere to
         put a keyword, so it always decodes and always masks; call
         :meth:`read` or :meth:`read_rows` when you want ``masked=False``.
+
+        Parameters
+        ----------
+        key:
+            An integer, a slice, a sequence of positions, or a boolean array
+            with one entry per row. A negative position counts back from the
+            last row.
 
         Raises
         ------
@@ -358,11 +363,6 @@ class Column:
     def read_rows(self, rows: Any, *, masked: bool = True) -> Any:
         """Read just *rows*, decoded, in the order given.
 
-        *rows* may be a slice, a sequence of integers, or a boolean mask with
-        one entry per row. A negative position counts back from the end, so
-        ``-1`` is the last row. Integer positions may be given in any order and
-        may repeat.
-
         A slice is read as a single hyperslab. Anything else is fetched with
         coalesced, chunk-aligned block reads, so a selection confined to a few
         chunks costs a few chunks rather than the whole column — in both time
@@ -370,6 +370,11 @@ class Column:
 
         Parameters
         ----------
+        rows:
+            A slice, a sequence of integer positions, or a boolean mask with
+            one entry per row. A negative position counts back from the end, so
+            ``-1`` is the last row. Integer positions may be given in any order
+            and may repeat; the result follows the order given.
         masked:
             As for :meth:`read`.
 
@@ -396,6 +401,12 @@ class Column:
 
         Needs the optional ``pyarrow`` dependency (``pip install
         h5col[arrow]``).
+
+        Parameters
+        ----------
+        rows:
+            Which rows to convert, in any form :meth:`read_rows` accepts. None
+            (the default) converts the whole column.
         """
         return arrow.column_array(self, rows)
 
@@ -427,6 +438,18 @@ class Column:
     ) -> SearchIndex:
         """Build a search index over this column (:meth:`Table.add_search_index`).
 
+        Parameters
+        ----------
+        kind:
+            Which index family to build — ``CHUNK_MINMAX``, ``SORTED_ROWS`` or
+            ``BITMAP``. None (the default) picks the family that suits the
+            column's datatype.
+        name:
+            Name for the index dataset under ``SEARCH_INDEXES``. None derives
+            one from the column name and the kind.
+        description:
+            Free text stored on the index as its ``DESCRIPTION`` attribute.
+
         Raises
         ------
         SchemaError
@@ -449,7 +472,17 @@ class Column:
         name: str | None = None,
         description: str | None = None,
     ) -> SearchIndex:
-        """Build a search index over this column (alias of :meth:`add_search_index`)."""
+        """Build a search index over this column (alias of :meth:`add_search_index`).
+
+        Parameters
+        ----------
+        kind:
+            As for :meth:`add_search_index`.
+        name:
+            As for :meth:`add_search_index`.
+        description:
+            As for :meth:`add_search_index`.
+        """
         return self.add_search_index(kind, name=name, description=description)
 
     def is_missing(self) -> npt.NDArray[np.bool_]:

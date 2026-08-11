@@ -22,9 +22,9 @@ ColumnSpec(name="t_air", dtype="float64", units="degC", valid_min=-90, valid_max
 ```
 
 Unless you pass `fill_value=`, the column receives the convention's recommended
-per-`dtype` sentinel as its fill (the exact values are tabulated in [missing
+fill for its `dtype` (the exact values are tabulated in [missing
 values](missing-values.md)). A numeric dtype outside that set, e.g., `float16`,
-has no recommended sentinel, so it is accepted only with an explicit
+has no recommended fill, so it is accepted only with an explicit
 `fill_value=`. Creation raises a {class}`~h5col.FillValueError` without one.
 `valid_min` and `valid_max` are stored as column attributes for consumers, and
 they guard the fill: a fill value inside the declared valid range is rejected at

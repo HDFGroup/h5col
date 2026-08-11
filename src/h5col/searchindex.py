@@ -246,6 +246,11 @@ class ChunkMinMaxIndex(SearchIndex):
     def chunk_row_range(self, chunk_id: int) -> tuple[int, int]:
         """Row interval ``[start, stop)`` that chunk *chunk_id* covers.
 
+        Parameters
+        ----------
+        chunk_id:
+            A zero-based chunk position, as returned by :meth:`prune`.
+
         Raises
         ------
         IndexError
@@ -264,11 +269,18 @@ class ChunkMinMaxIndex(SearchIndex):
         The Layer-1 primitive: returns a **superset** of the chunks containing
         rows whose (non-missing) value satisfies ``op value`` — every returned
         chunk must still be read and verified, but no matching chunk is ever
-        excluded. ``op`` is one of ``<  <=  >  >=  ==  between`` (``between``
-        takes an inclusive ``(low, high)`` pair). Chunks with no orderable,
-        non-missing element carry placeholder bounds and are never candidates;
-        missing rows never match a value predicate (query them with
-        :meth:`Column.is_missing`, not with an index).
+        excluded. Chunks with no orderable, non-missing element carry
+        placeholder bounds and are never candidates; missing rows never match a
+        value predicate (query them with :meth:`Column.is_missing`, not with an
+        index).
+
+        Parameters
+        ----------
+        op:
+            One of ``<``, ``<=``, ``>``, ``>=``, ``==`` or ``between``.
+        value:
+            The value to compare against, in the column's decoded form. For
+            ``between`` it is an inclusive ``(low, high)`` pair instead.
 
         Raises
         ------
@@ -397,10 +409,17 @@ class SortedRowsIndex(SearchIndex):
         Exact, not a superset: binary search over the sorted body — reading
         O(log NROWS) individual column elements, never the full column — then
         one contiguous permutation slice. The rows come back in sorted-value
-        rank order, not row order (sort them before a chunked read).
-        ``op`` is one of ``<  <=  >  >=  ==  between`` (``between`` takes an
-        inclusive ``(low, high)`` pair). Missing rows and NaN rows live in the
-        tails and never match (query them with :meth:`Column.is_missing`).
+        rank order, not row order (sort them before a chunked read). Missing
+        rows and NaN rows live in the tails and never match (query them with
+        :meth:`Column.is_missing`).
+
+        Parameters
+        ----------
+        op:
+            One of ``<``, ``<=``, ``>``, ``>=``, ``==`` or ``between``.
+        value:
+            The value to compare against, in the column's decoded form. For
+            ``between`` it is an inclusive ``(low, high)`` pair instead.
 
         Raises
         ------
@@ -527,6 +546,12 @@ class BitmapIndex(SearchIndex):
         matches zero rows. Missing rows never match a value predicate, so a
         query equal to the column's fill value returns an empty array.
 
+        Parameters
+        ----------
+        value:
+            The value to match, in the column's decoded form. On a categorical
+            column a ``str`` label is accepted and encoded to its code.
+
         Raises
         ------
         StaleIndexError
@@ -609,6 +634,12 @@ class BitmapIndex(SearchIndex):
         None when any value is missing from a non-exhaustive enumeration —
         the union cannot be proven complete and the caller must scan.
 
+        Parameters
+        ----------
+        values:
+            An iterable of values, each in whatever form :meth:`rows` accepts.
+            Duplicates are harmless.
+
         Raises
         ------
         StaleIndexError, ConformanceError, SchemaError
@@ -626,8 +657,16 @@ class BitmapIndex(SearchIndex):
 def wrap_index(dataset: Any, table: Table, column_ds: Any = None) -> SearchIndex:
     """Wrap a search-index dataset in the class matching its ``KIND``.
 
-    Pass *column_ds* to bind the wrapper to the column it was obtained
-    through (see :class:`SearchIndex`).
+    Parameters
+    ----------
+    dataset:
+        A search-index dataset. Its ``KIND`` attribute picks the class; an
+        unrecognized kind yields the base :class:`SearchIndex`.
+    table:
+        The table the index belongs to.
+    column_ds:
+        The column dataset the index was obtained through, binding the wrapper
+        to that column (see :class:`SearchIndex`). None leaves it unbound.
     """
     kind = indexes.index_kind(dataset)
     if kind == KIND_CHUNK_MINMAX:

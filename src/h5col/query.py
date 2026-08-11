@@ -142,7 +142,14 @@ class Field:
     __hash__ = None  # type: ignore[assignment]
 
     def isin(self, values: Any) -> Expression:
-        """A predicate matching rows whose value is in *values* (pyarrow ``in``)."""
+        """A predicate matching rows whose value is in *values* (pyarrow ``in``).
+
+        Parameters
+        ----------
+        values:
+            Any iterable of values to match, in the column's decoded form. It
+            is consumed immediately, so a generator is fine.
+        """
         return Expression(_Pred(self.name, "in", tuple(values)))
 
     def is_null(self) -> Expression:
@@ -158,7 +165,15 @@ class Field:
 
 
 def field(name: str) -> Field:
-    """Reference a column by name for building query :class:`Expression` objects."""
+    """Reference a column by name for building query :class:`Expression` objects.
+
+    Parameters
+    ----------
+    name:
+        A column name. It is not checked here — a name that is not a column of
+        the table raises when the expression is evaluated, not when it is
+        built, so an expression can be assembled before a table is opened.
+    """
     return Field(name)
 
 
@@ -965,10 +980,6 @@ class Selection:
     def read(self, columns: Any = None, *, masked: bool = True) -> dict[str, Any]:
         """Materialize the selected rows as ``{name: values}``.
 
-        *masked* is as for :meth:`h5col.Table.read`: each scalar column comes
-        back as a :class:`numpy.ma.MaskedArray` marking its missing rows unless
-        False is passed.
-
         Each value is a NumPy array for a scalar column and a Python ``list``
         (of per-row lists, ``None`` for a null row) for a list column.
         Evaluates the query on first use (see :attr:`row_positions`).
@@ -981,6 +992,16 @@ class Selection:
         :meth:`ListColumn.read_rows <h5col.ListColumn.read_rows>`, which reads
         the span the matching rows cover and so is never wider than the whole
         column. The result is identical either way.
+
+        Parameters
+        ----------
+        columns:
+            Names to read, in the order given. None (the default) reads every
+            column of the table.
+        masked:
+            As for :meth:`h5col.Table.read`: each scalar column comes back as a
+            :class:`numpy.ma.MaskedArray` marking its missing rows unless False
+            is passed. List columns accept it and ignore it.
 
         Raises
         ------
@@ -1017,6 +1038,12 @@ class Selection:
         """Convert the selected rows to a :class:`pyarrow.Table`.
 
         As :meth:`h5col.Table.to_arrow`, restricted to the matching rows.
+
+        Parameters
+        ----------
+        columns:
+            Names to convert, in the order given. None (the default) converts
+            every column of the table.
         """
         from . import arrow
 

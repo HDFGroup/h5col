@@ -55,6 +55,12 @@ class ListColumn:
         Only the rows asked for are read; see :meth:`read_rows` for what that
         means when the positions are scattered rather than a range.
 
+        Parameters
+        ----------
+        key:
+            An integer, a slice, a sequence of positions, or a boolean array
+            with one entry per row.
+
         Raises
         ------
         IndexError
@@ -122,25 +128,33 @@ class ListColumn:
     def read(self, *, masked: bool = True) -> list[Any]:
         """Read rows ``[0, NROWS)`` as a list of per-row lists (``None`` = null).
 
-        ``masked`` is accepted and ignored, so a caller can pass it uniformly
-        across a table's columns. A list column is ragged and so cannot be a
-        :class:`numpy.ma.MaskedArray`. It already spells a null row ``None``.
+        Parameters
+        ----------
+        masked:
+            Accepted and ignored, so a caller can pass it uniformly across a
+            table's columns. A list column is ragged and so cannot be a
+            :class:`numpy.ma.MaskedArray`; it already spells a null row
+            ``None``.
         """
         return lists.read_list_column(self._g, self._table.nrows)
 
     def read_rows(self, rows: Any, *, masked: bool = True) -> list[Any]:
         """Read just *rows*, in the order given, as a list of (list | None).
 
-        Accepts the same row specs as :meth:`Column.read_rows` — a slice, a
-        sequence of positions, or a boolean mask — so a caller can select rows
-        the same way whatever kind of column it holds. ``masked`` is accepted
-        and ignored, as it is by :meth:`read`.
-
         A contiguous range is read directly. Scattered positions are served
         from the range that spans them, from the lowest wanted row to the
         highest, which is never wider than the column itself: rows that sit
         near each other cost almost nothing, and rows spread from end to end
         cost what reading the column costs.
+
+        Parameters
+        ----------
+        rows:
+            The same row specs :meth:`Column.read_rows` takes — a slice, a
+            sequence of positions, or a boolean mask — so a caller can select
+            rows the same way whatever kind of column it holds.
+        masked:
+            Accepted and ignored, as it is by :meth:`read`.
         """
         n = self._table.nrows
         if isinstance(rows, slice):

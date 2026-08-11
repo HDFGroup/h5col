@@ -32,6 +32,13 @@ def is_orderable(dtype: Any) -> bool:
     datatypes, and variable-length-array datatypes. Everything else the spec
     enumerates — integers, floats, booleans, strings (fixed and variable
     length), opaque, and enumerations — is orderable.
+
+    Parameters
+    ----------
+    dtype:
+        Anything :func:`numpy.dtype` accepts, including h5py reference, string,
+        variable-length and enumeration dtypes, whose metadata decides the
+        answer.
     """
     dt = np.dtype(dtype)
     if h5py.check_ref_dtype(dt) is not None:
@@ -51,7 +58,14 @@ def is_orderable(dtype: Any) -> bool:
 
 
 def is_spacepad(dataset: Any) -> bool:
-    """True if *dataset* stores fixed-length strings with space padding."""
+    """True if *dataset* stores fixed-length strings with space padding.
+
+    Parameters
+    ----------
+    dataset:
+        An h5py dataset. Anything whose datatype cannot be inspected answers
+        False, so a non-string dataset is safe to pass.
+    """
     try:
         return bool(dataset.id.get_type().get_strpad() == h5t.STR_SPACEPAD)
     except Exception:
@@ -63,6 +77,14 @@ def normalize_strings(values: np.ndarray, *, spacepad: bool) -> np.ndarray:
 
     NUL padding needs no work (``memcmp`` order-equivalence above); space
     padding is stripped explicitly.
+
+    Parameters
+    ----------
+    values:
+        Stored fixed-length string values.
+    spacepad:
+        Whether the dataset pads with spaces rather than NULs, as reported by
+        :func:`is_spacepad`. False returns *values* unchanged.
     """
     if spacepad:
         return np.char.rstrip(values, b" ")
@@ -72,9 +94,14 @@ def normalize_strings(values: np.ndarray, *, spacepad: bool) -> np.ndarray:
 def min_max(values: np.ndarray) -> tuple[Any, Any]:
     """Min and max of *values* under the H5Col order.
 
-    The caller passes only orderable, non-missing, non-NaN elements — at least
-    one. Flexible dtypes (fixed strings) cannot use NumPy reductions, so they
-    sort instead.
+    Flexible dtypes (fixed strings) cannot use NumPy reductions, so they sort
+    instead.
+
+    Parameters
+    ----------
+    values:
+        Orderable elements with the missing and NaN ones already removed, and
+        at least one left. Both conditions are the caller's to meet.
 
     Raises
     ------

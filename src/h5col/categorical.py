@@ -33,8 +33,13 @@ def default_categorical_fill(dtype: Any) -> int:
     """Default missing-code fill for a categorical column of *dtype*.
 
     Signed code dtypes use ``-1``; unsigned code dtypes use the type maximum
-    (H5Col's recommended unsigned sentinel). Both lie outside ``[0, ncats)`` as
-    long as the code type has room for a sentinel.
+    (H5Col's recommended unsigned fill). Both lie outside ``[0, ncats)`` as
+    long as the code type has room to spare.
+
+    Parameters
+    ----------
+    dtype:
+        The column's integer code dtype.
     """
     dt = np.dtype(dtype)
     if dt.kind == "u":
@@ -47,6 +52,12 @@ def choose_code_dtype(ncats: int) -> np.dtype:
 
     Signed so the default ``-1`` fill code is always representable and outside
     ``[0, ncats)``.
+
+    Parameters
+    ----------
+    ncats:
+        How many labels the column has. The result has room for every code in
+        ``[0, ncats)`` plus the fill code.
     """
     if ncats <= 127:
         return np.dtype("i1")
@@ -60,7 +71,22 @@ def choose_code_dtype(ncats: int) -> np.dtype:
 def create_categories_dataset(
     cat_group: Any, name: str, categories: list[Any], ordered: bool | None = None
 ) -> Any:
-    """Create a rank-1 categories dataset holding the label values."""
+    """Create a rank-1 categories dataset holding the label values.
+
+    Parameters
+    ----------
+    cat_group:
+        The table's ``CATEGORIES`` group, which the dataset is created in.
+    name:
+        Name for the new dataset within that group.
+    categories:
+        The labels, in code order — label *i* is the meaning of code *i*. They
+        must be unique. All-string labels are stored as fixed-length strings
+        sized to the longest; anything else is stored with its NumPy dtype.
+    ordered:
+        Whether the labels carry a meaningful order, stored as the ``ORDERED``
+        attribute. None leaves the attribute off.
+    """
     cats = list(categories)
     if len(set(cats)) != len(cats):
         raise SchemaError("categories must be unique")
@@ -76,7 +102,15 @@ def create_categories_dataset(
 
 
 def load_category_labels(table_group: Any, code_dataset: Any) -> list[Any]:
-    """Return the decoded category labels for a categorical column."""
+    """Return the decoded category labels for a categorical column.
+
+    Parameters
+    ----------
+    table_group:
+        The table group, used to resolve the column's ``CATEGORIES`` reference.
+    code_dataset:
+        The categorical column's code dataset.
+    """
     cat_ds = references.resolve(table_group, code_dataset.attrs[ATTR_CATEGORIES])
     raw = cat_ds[...]
     if FixedString.is_fixed_string(cat_ds.dtype):
@@ -89,6 +123,13 @@ def n_categories(table_group: Any, code_dataset: Any) -> int:
 
     Cheaper than :func:`load_category_labels` (no reads/decoding of the label
     values) — used where only the count is needed, e.g. a ``repr``.
+
+    Parameters
+    ----------
+    table_group:
+        The table group, used to resolve the column's ``CATEGORIES`` reference.
+    code_dataset:
+        The categorical column's code dataset.
     """
     cat_ds = references.resolve(table_group, code_dataset.attrs[ATTR_CATEGORIES])
     return int(cat_ds.shape[0])
@@ -101,6 +142,11 @@ def user_fill_code(code_dataset: Any) -> int | None:
     before treating a fill value as a missing-row marker. Skipping that check
     would read h5py's library default of ``0`` as a fill code, decoding the
     *first* category as missing on any column that declares no fill.
+
+    Parameters
+    ----------
+    code_dataset:
+        The categorical column's code dataset.
     """
     # H5D_FILL_VALUE_USER_DEFINED == 2 (matches Column._has_user_fill).
     if code_dataset.id.get_create_plist().fill_value_defined() != 2:
@@ -110,6 +156,16 @@ def user_fill_code(code_dataset: Any) -> int | None:
 
 def encode_labels(table_group: Any, code_dataset: Any, values: Any) -> npt.NDArray[Any]:
     """Map an array-like of labels to integer codes (``None`` -> the fill code).
+
+    Parameters
+    ----------
+    table_group:
+        The table group, used to resolve the column's ``CATEGORIES`` reference.
+    code_dataset:
+        The categorical column's code dataset, whose dtype the codes take.
+    values:
+        Labels to encode. ``None`` marks a missing row, and a
+        :class:`numpy.ma.MaskedArray` element that is masked means the same.
 
     Raises
     ------
@@ -147,6 +203,15 @@ def decode_codes(table_group: Any, code_dataset: Any, codes: Any) -> npt.NDArray
     String labels come back in the nullable form of
     :func:`~h5col.strings.decoded_string_dtype`; numeric labels keep an object
     array, being the only container that holds both them and a ``None``.
+
+    Parameters
+    ----------
+    table_group:
+        The table group, used to resolve the column's ``CATEGORIES`` reference.
+    code_dataset:
+        The categorical column's code dataset.
+    codes:
+        The stored codes to decode, as read from that dataset.
 
     Raises
     ------
@@ -189,7 +254,15 @@ def decode_codes(table_group: Any, code_dataset: Any, codes: Any) -> npt.NDArray
 
 
 def is_ordered(table_group: Any, code_dataset: Any) -> bool | None:
-    """Return the categories dataset's ``ordered`` flag, or None if absent."""
+    """Return the categories dataset's ``ordered`` flag, or None if absent.
+
+    Parameters
+    ----------
+    table_group:
+        The table group, used to resolve the column's ``CATEGORIES`` reference.
+    code_dataset:
+        The categorical column's code dataset.
+    """
     cat_ds = references.resolve(table_group, code_dataset.attrs[ATTR_CATEGORIES])
     if ATTR_ORDERED not in cat_ds.attrs:
         return None

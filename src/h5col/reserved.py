@@ -119,7 +119,14 @@ _FORBIDDEN_COLUMN_NAMES = (
 
 
 def is_valid_link_name(name: object) -> bool:
-    """Return True if *name* is usable as an HDF5 link name (UTF-8, no ``/``/NUL)."""
+    """Return True if *name* is usable as an HDF5 link name (UTF-8, no ``/``/NUL).
+
+    Parameters
+    ----------
+    name:
+        Any object. A non-string, the empty string, and a string containing
+        ``/`` or a NUL all answer False rather than raising.
+    """
     return (
         isinstance(name, str)
         and len(name) > 0
@@ -130,6 +137,11 @@ def is_valid_link_name(name: object) -> bool:
 
 def validate_column_name(name: str) -> str:
     """Validate a producer-chosen column name and return it unchanged.
+
+    Parameters
+    ----------
+    name:
+        The proposed column name.
 
     Raises
     ------
@@ -156,6 +168,11 @@ def validate_index_dataset_name(name: str) -> str:
     reserved-names rule 2 forbids reusing any reserved name for a search-index
     dataset.
 
+    Parameters
+    ----------
+    name:
+        The proposed index dataset name.
+
     Raises
     ------
     SchemaError
@@ -175,5 +192,12 @@ def validate_index_dataset_name(name: str) -> str:
 
 
 def is_discouraged_column_name(name: str) -> bool:
-    """Return True for names H5Col says producers SHOULD avoid (leading ``_``)."""
+    """Return True for names H5Col says producers SHOULD avoid (leading ``_``).
+
+    Parameters
+    ----------
+    name:
+        A column name. This is advisory only — such a name is discouraged by
+        the convention, not rejected.
+    """
     return name.startswith("_")

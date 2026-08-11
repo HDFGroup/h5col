@@ -210,6 +210,11 @@ class TableSpec(BaseModel):
     def column(self, name: str) -> ColumnSpec | ListColumnSpec:
         """Return the column spec named *name*.
 
+        Parameters
+        ----------
+        name:
+            A column name as declared in this spec. Matching is exact.
+
         Raises
         ------
         KeyError

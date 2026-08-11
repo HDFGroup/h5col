@@ -68,9 +68,9 @@ Column metadata in most formats is a key–value bag whose meaning each tool
 defines for itself. The H5Col convention assigns defined meanings: physical
 units and the vocabulary they come from, valid ranges, per-column
 descriptions, and above all a precise missing-value model. A missing row
-stores the column's fill value; the convention recommends per-datatype
-sentinels, permits NaN where that is the natural choice, and defines a single
-canonical test that both cases reduce to. This implementation also enforces a
+stores the column's fill value; the convention recommends one per datatype,
+permits NaN where that is the natural choice, and defines a single test that
+both cases reduce to. This implementation also enforces a
 rule that anyone who has lost data to a database will appreciate: writing an
 oversized value into a fixed-length string column raises an error. Nothing is
 ever silently truncated.

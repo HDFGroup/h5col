@@ -92,7 +92,13 @@ def _scalar_uint64(attrs: Any, name: str) -> int | None:
 
 
 def table_generation(table_group: Any) -> int | None:
-    """The table's ``GENERATION``, or None when it carries none."""
+    """The table's ``GENERATION``, or None when it carries none.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group.
+    """
     return read_uint64_attr(table_group, ATTR_GENERATION)
 
 
@@ -112,6 +118,12 @@ def ensure_generation(table_group: Any) -> int:
     explicitly safe (it can only disable indexes, never validate stale ones),
     whereas any reused value could equal some index's token and spuriously
     validate content nobody has verified.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. The attribute is created on it when absent, and
+        repaired when malformed.
     """
     gen = _scalar_uint64(table_group.attrs, ATTR_GENERATION)
     if gen is not None:
@@ -149,6 +161,11 @@ def mutation_generation(table_group: Any) -> int | None:
     index's residue ``SOURCE_GENERATION`` and spuriously validate unverified
     content once step 5 rewrites the attribute as uint64. It is repaired via
     :func:`ensure_generation`, which picks a value above every source token.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group.
     """
     gen = _scalar_uint64(table_group.attrs, ATTR_GENERATION)
     if gen is not None:
@@ -164,6 +181,13 @@ def index_is_valid(index_ds: Any, table_group: Any) -> bool:
     ``SOURCE_GENERATION == GENERATION AND SOURCE_NROWS == NROWS``, with any
     absent or wrong-datatype token failing the check. A False result means
     "behave as if the index were not present" — it is never an error.
+
+    Parameters
+    ----------
+    index_ds:
+        The search-index dataset carrying the validity tokens.
+    table_group:
+        The table's HDF5 group, holding the values they are compared against.
     """
     gen = _scalar_uint64(table_group.attrs, ATTR_GENERATION)
     nrows = _scalar_uint64(table_group.attrs, ATTR_NROWS)
@@ -188,6 +212,11 @@ def index_kind(index_ds: Any) -> str | None:
     A malformed ``KIND`` (non-string or non-scalar value) yields None so that
     no kind-dispatched code path ever acts on it; ``validate`` flags the
     malformed attribute separately.
+
+    Parameters
+    ----------
+    index_ds:
+        A search-index dataset.
     """
     if ATTR_KIND not in index_ds.attrs:
         return None
@@ -208,6 +237,11 @@ def search_index_datasets(table_group: Any) -> dict[str, Any]:
     A ``SEARCH_INDEXES`` child that is not a group (a misuse of the reserved
     name) holds no index datasets; ``validate`` flags it, the consumer paths
     simply see no indexes.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group.
     """
     si_group = table_group.get(GROUP_SEARCH_INDEXES)
     if si_group is None or not isinstance(si_group, h5py.Group):
@@ -220,7 +254,13 @@ def search_index_datasets(table_group: Any) -> dict[str, Any]:
 
 
 def column_datasets(table_group: Any) -> dict[str, Any]:
-    """Direct-child rank-1 datasets of the table group (the scalar columns)."""
+    """Direct-child rank-1 datasets of the table group (the scalar columns).
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. List columns are groups and so are not returned.
+    """
     return {
         name: obj
         for name, obj in table_group.items()
@@ -235,6 +275,13 @@ def column_index_datasets(table_group: Any, column_ds: Any) -> list[Any]:
     their indexes are treated as absent, per the spec's tolerance rules —
     while ``validate`` reports them as rule-4 violations. A malformed
     (non-1-D) attribute raises, because no reference can be read from it.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, against which the references are resolved.
+    column_ds:
+        The column dataset whose ``SEARCH_INDEX_LIST`` is read.
     """
     if ATTR_SEARCH_INDEX_LIST not in column_ds.attrs:
         return []
@@ -270,6 +317,13 @@ def find_index_column(table_group: Any, index_ds: Any) -> Any | None:
     search-index dataset MUST NOT cover multiple columns"; there is then no
     correct answer, and silently picking one would make pruning against the
     wrong column's data possible — so this raises instead.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, whose column datasets are scanned.
+    index_ds:
+        The search-index dataset to find the owner of.
     """
     claimants: list[Any] = []
     for col_ds in column_datasets(table_group).values():
@@ -301,7 +355,16 @@ def find_index_column(table_group: Any, index_ds: Any) -> Any | None:
 # CHUNK_MINMAX: shape and content
 # --------------------------------------------------------------------------- #
 def source_chunk_len(column_ds: Any, nrows: int) -> int:
-    """Rows per chunk of the source column (its full extent when contiguous)."""
+    """Rows per chunk of the source column (its full extent when contiguous).
+
+    Parameters
+    ----------
+    column_ds:
+        The column dataset.
+    nrows:
+        The table's row count, used as the chunk length for a contiguous
+        (unchunked) column, which has one notional chunk covering everything.
+    """
     if column_ds.chunks is not None:
         return int(column_ds.chunks[0])
     return max(1, nrows)
@@ -312,6 +375,14 @@ def data_chunk_count(column_ds: Any, nrows: int) -> int:
 
     ``ceil(nrows / chunk_len)`` for a chunked column, ``1`` for a contiguous
     column, ``0`` when ``nrows == 0``. Tail-only chunks are not counted.
+
+    Parameters
+    ----------
+    column_ds:
+        The column dataset.
+    nrows:
+        The table's row count. Chunks holding only reserved rows above it are
+        not counted.
     """
     if nrows == 0:
         return 0
@@ -321,7 +392,13 @@ def data_chunk_count(column_ds: Any, nrows: int) -> int:
 
 
 def minmax_dtype(element_dtype: Any) -> np.dtype:
-    """The ``CHUNK_MINMAX`` compound dtype for a column of *element_dtype*."""
+    """The ``CHUNK_MINMAX`` compound dtype for a column of *element_dtype*.
+
+    Parameters
+    ----------
+    element_dtype:
+        The column's element dtype, which the ``min`` and ``max`` fields take.
+    """
     return np.dtype(
         [
             ("min", element_dtype),
@@ -347,6 +424,11 @@ def supported_index_dtype(dtype: Any) -> bool:
     supported family: the spec also orders variable-length strings and opaque
     values, but this implementation does not build indexes over them (building
     an index is always optional for a producer).
+
+    Parameters
+    ----------
+    dtype:
+        A column's element dtype.
     """
     if not is_orderable(dtype):
         return False
@@ -364,8 +446,16 @@ supported_minmax_dtype = supported_index_dtype
 def compute_chunk_minmax(column_ds: Any, nrows: int) -> np.ndarray:
     """Recompute the ``CHUNK_MINMAX`` entries for rows ``[0, nrows)``.
 
-    This is the build oracle: creation, append maintenance, refresh, and deep
-    validation all derive the index content from this one function.
+    Creation, append maintenance, refresh, and deep validation all derive the
+    index content from this one function, so they cannot disagree.
+
+    Parameters
+    ----------
+    column_ds:
+        The column dataset to derive the index from.
+    nrows:
+        The table's row count; rows at or above it are reserved storage and are
+        not indexed.
     """
     dtype = column_ds.dtype
     if not supported_index_dtype(dtype):
@@ -432,6 +522,14 @@ def compute_sorted_rows(column_ds: Any, nrows: int) -> tuple[np.ndarray, int, in
     NaN tail, each in increasing row order. A row goes to the NaN tail if its
     value is NaN, and otherwise to the fill tail if it matches a non-NaN fill;
     with a NaN fill every missing row is a NaN row and the fill tail is empty.
+
+    Parameters
+    ----------
+    column_ds:
+        The column dataset to derive the index from.
+    nrows:
+        The table's row count; rows at or above it are reserved storage and are
+        not indexed.
     """
     dtype = column_ds.dtype
     if not supported_index_dtype(dtype):
@@ -465,7 +563,13 @@ def compute_sorted_rows(column_ds: Any, nrows: int) -> tuple[np.ndarray, int, in
 # BITMAP: content
 # --------------------------------------------------------------------------- #
 def bitmap_bytes(nrows: int) -> int:
-    """Bytes per bitmap row for a table of *nrows* (``ceil(nrows / 8)``)."""
+    """Bytes per bitmap row for a table of *nrows* (``ceil(nrows / 8)``).
+
+    Parameters
+    ----------
+    nrows:
+        The table's row count, one bit apiece.
+    """
     return (nrows + 7) // 8
 
 
@@ -477,6 +581,13 @@ def bitmap_values_dataset(table_group: Any, index_ds: Any) -> Any | None:
     sitting next to the index under ``SEARCH_INDEXES`` — yields None, making
     the bitmap unusable rather than an error; ``validate`` reports the
     violation separately.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, against which the reference is resolved.
+    index_ds:
+        The ``BITMAP`` index dataset carrying the ``VALUES`` reference.
     """
     if ATTR_VALUES not in index_ds.attrs:
         return None
@@ -513,6 +624,14 @@ def compute_bitmap(column_ds: Any, nrows: int) -> tuple[np.ndarray, np.ndarray, 
     (pad bits zero), and the ``exhaustive`` claim. NaN cannot be enumerated —
     IEEE 754 equality never matches it — so non-missing NaN elements are left
     out of the enumeration and make the claim ``exhaustive = False``.
+
+    Parameters
+    ----------
+    column_ds:
+        The column dataset to derive the index from.
+    nrows:
+        The table's row count; rows at or above it are reserved storage and are
+        not indexed.
     """
     dtype = column_ds.dtype
     if not supported_index_dtype(dtype):
@@ -638,6 +757,20 @@ def create_chunk_minmax(
     first and the current-valued tokens last, so a crash mid-build leaves a
     dataset that fails the validity check.
 
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. The index is created under its
+        ``SEARCH_INDEXES`` group, which is created when absent.
+    column_ds:
+        The column dataset to index.
+    name:
+        Name for the index dataset. None derives one from the column name and
+        the kind; the name carries no meaning, the linkage is the object
+        reference in the column's ``SEARCH_INDEX_LIST``.
+    description:
+        Free text stored on the index as its ``DESCRIPTION`` attribute.
+
     Raises
     ------
     ConformanceError
@@ -701,6 +834,20 @@ def create_sorted_rows(
     Building over an already-committed table state writes the index content
     first and the current-valued tokens last, so a crash mid-build leaves a
     dataset that fails the validity check.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. The index is created under its
+        ``SEARCH_INDEXES`` group, which is created when absent.
+    column_ds:
+        The column dataset to index.
+    name:
+        Name for the index dataset. None derives one from the column name and
+        the kind; the name carries no meaning, the linkage is the object
+        reference in the column's ``SEARCH_INDEX_LIST``.
+    description:
+        Free text stored on the index as its ``DESCRIPTION`` attribute.
 
     Raises
     ------
@@ -767,6 +914,20 @@ def create_bitmap(
     non-missing values in H5Col order, so ``ordered`` is true; ``exhaustive``
     is true unless the column holds non-missing NaN elements, which IEEE 754
     equality makes impossible to enumerate.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. The index is created under its
+        ``SEARCH_INDEXES`` group, which is created when absent.
+    column_ds:
+        The column dataset to index.
+    name:
+        Name for the index dataset. None derives one from the column name and
+        the kind; the name carries no meaning, the linkage is the object
+        reference in the column's ``SEARCH_INDEX_LIST``.
+    description:
+        Free text stored on the index as its ``DESCRIPTION`` attribute.
 
     Raises
     ------
@@ -977,6 +1138,16 @@ def refresh_index(table_group: Any, index_ds: Any, column_ds: Any) -> None:
     window where torn content sits behind still-passing tokens — the one state
     the token protocol exists to prevent.
 
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, whose committed state the index is rebuilt
+        against.
+    index_ds:
+        The index dataset to rebuild.
+    column_ds:
+        The column the index covers, which its content is derived from.
+
     Raises
     ------
     ConformanceError
@@ -1011,6 +1182,17 @@ def append_refresh_indexes(table_group: Any, g_old: int, n_new: int) -> bool:
     is no correct column to rebuild against (the spec forbids the state, and
     ``validate`` reports it). Returns True when any index was rewritten, so
     the caller knows to flush.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group.
+    g_old:
+        The pre-mutation ``GENERATION``, from :func:`mutation_generation`. The
+        tokens are written for ``g_old + 1``, the generation the caller is
+        about to commit.
+    n_new:
+        The post-mutation row count the caller is about to commit.
     """
     columns = [
         col_ds
@@ -1051,6 +1233,12 @@ def refresh_all_indexes(table_group: Any) -> int:
     were. Currently valid indexes are also left untouched: they already
     describe the committed state, and rewriting them in place would open a
     crash window with torn content behind passing tokens.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, whose committed state every index is rebuilt
+        against.
     """
     nrows = read_uint64_attr(table_group, ATTR_NROWS)
     if nrows is None:
@@ -1385,6 +1573,17 @@ def validate_search_indexes(
     a stale index is exempt (consumers treat it as absent). Structural rule-9
     checks always run; the semantic check — recomputing the index from its
     column — is O(index build) and runs only with ``deep=True``.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group.
+    nrows:
+        The table's committed row count, which the indexes' extents and tokens
+        are checked against.
+    deep:
+        When True, also recompute each valid index from its column and compare,
+        which costs an index build apiece.
 
     Raises
     ------

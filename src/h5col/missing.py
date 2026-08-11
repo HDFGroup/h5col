@@ -39,8 +39,14 @@ def recommended_fill(dtype: Any) -> Any:
       (the spec's enum fill convention).
     - Enumerations without a ``MISSING`` member, including the H5Col boolean
       datatype (which MUST NOT declare a fill value at all) → raises.
-    - Integer and float families → the table sentinel.
+    - Integer and float families → the tabulated value for that width.
     - Anything else (e.g. ``float16``) → raises :class:`FillValueError`.
+
+    Parameters
+    ----------
+    dtype:
+        Anything :func:`numpy.dtype` accepts, including h5py string and
+        enumeration dtypes, whose metadata decides which rule above applies.
     """
     if h5py.check_string_dtype(dtype) is not None:
         return b""
@@ -70,6 +76,12 @@ def masked_to_none(values: Any) -> Any:
     Anything that is not a 1-D masked array is returned unchanged, and a masked
     array with nothing masked yields its plain data, so the typed fast paths
     downstream are left undisturbed.
+
+    Parameters
+    ----------
+    values:
+        Usually a 1-D :class:`numpy.ma.MaskedArray`. Anything else, including a
+        plain array or a list, is returned unchanged.
     """
     if not isinstance(values, np.ma.MaskedArray) or values.ndim != 1:
         return values
@@ -86,6 +98,15 @@ def is_missing(values: Any, fill_value: Any) -> npt.NDArray[np.bool_]:
 
     ``missing(v, f) = isnan(f) ? isnan(v) : v == f`` — i.e. when the fill value is
     a NaN bit pattern the test is ``isnan(v)``; otherwise it is bit/value equality.
+
+    Parameters
+    ----------
+    values:
+        The stored values to test, as read from a column.
+    fill_value:
+        The column's declared fill value. A NaN may be given as a Python
+        float, a NumPy scalar or a 0-d array; all three take the ``isnan``
+        branch.
     """
     arr = np.asarray(values)
     fill = np.asarray(fill_value)
@@ -108,8 +129,22 @@ def validate_fill_outside_range(
 ) -> None:
     """Check that *fill* lies strictly outside ``[valid_min, valid_max]``.
 
-    A ``None`` bound is treated as unbounded on that side. Raises
-    :class:`FillValueError` if *fill* falls inside the declared range.
+    Parameters
+    ----------
+    fill:
+        The column's fill value.
+    valid_min:
+        Lower bound of the column's declared valid range, or None for
+        unbounded below.
+    valid_max:
+        Upper bound, or None for unbounded above. With both bounds None there
+        is nothing to check and the call succeeds.
+
+    Raises
+    ------
+    FillValueError
+        If *fill* falls inside the declared range, where a genuine value could
+        collide with it.
     """
     if valid_min is None and valid_max is None:
         return

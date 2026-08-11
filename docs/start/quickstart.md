@@ -50,8 +50,8 @@ column with an 8-byte budget; writing a longer value will raise
 categorical column: the labels are declared once, and the column stores small
 integer codes. `t_air` uses NaN as its fill value, so missing temperatures
 behave the way NumPy and pandas users expect. `samples` marks missing rows
-with the sentinel `-1` instead, and declares `valid_min=0` so the sentinel is
-provably outside the valid range.
+with `-1` instead, and declares `valid_min=0` so that `-1` is provably outside
+the range real values can take.
 
 ## Append rows
 

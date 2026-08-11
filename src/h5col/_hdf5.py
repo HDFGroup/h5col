@@ -137,6 +137,12 @@ def row_positions(rows: Any, nrows: int, name: str) -> np.ndarray:
 
     Parameters
     ----------
+    rows:
+        A sequence of integer positions, or a boolean mask with one entry per
+        row. Positions may be in any order and may repeat.
+    nrows:
+        The column's row count, which positions are normalized and bounds
+        checked against, and which a boolean mask must match in length.
     name:
         The column's name, used only to make the error messages specific.
 

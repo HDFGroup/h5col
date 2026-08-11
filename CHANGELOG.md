@@ -61,6 +61,19 @@ to follow [Semantic Versioning](https://semver.org/).
   h5py directly. Asking for half a column is now cheaper than asking for all
   of it; previously it was three times more expensive.
 
+- **Every parameter of every public callable is documented.** An audit of the
+  source found 114 public functions and methods whose docstring left at least
+  one parameter of its signature undescribed — 207 parameters in all, of which
+  86 were on callables the API reference renders. `Table.create` documented
+  none of its ten; `Table.read` and `Column.read_rows` documented `masked` but
+  not the parameters that decide what gets read. All of them now have a
+  `Parameters` section covering the whole signature.
+
+  Ruff's D417, which catches a `Parameters` section that covers only part of a
+  signature, is switched off by the numpy docstring convention. It is now named
+  explicitly in the lint configuration so it runs, and the gate fails if a
+  parameter description goes missing again.
+
 ### Fixed
 
 - A boolean mask passed to `read_rows` selected the wrong rows. The mask was

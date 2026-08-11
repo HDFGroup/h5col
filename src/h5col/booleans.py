@@ -37,6 +37,13 @@ def is_bool_dtype(dtype: Any) -> bool:
     either signedness, whose members are exactly ``FALSE`` = 0 and ``TRUE`` = 1.
     Also accepts NumPy ``bool``: h5py normalizes its FALSE/TRUE-over-int8 enum
     (which *is* the H5Col boolean datatype on disk) back to ``bool`` on read.
+
+    Parameters
+    ----------
+    dtype:
+        Anything :func:`numpy.dtype` accepts, including a dtype carrying h5py
+        enumeration metadata. A dtype that is not an enumeration at all is not
+        an error; it simply answers False.
     """
     d = np.dtype(dtype)
     if d.kind == "b":
@@ -52,8 +59,18 @@ def is_bool_dtype(dtype: Any) -> bool:
 def encode_bool(values: Any) -> npt.NDArray[np.int8]:
     """Encode a boolean/0-1 array-like to an ``int8`` array of codes.
 
-    Raises :class:`SchemaError` if an integer input holds a value other than
-    0 or 1 (H5Col boolean columns may hold only those two codes).
+    Parameters
+    ----------
+    values:
+        A sequence or array of Python bools, NumPy bools, or integers that are
+        all 0 or 1. Any other integer is rejected rather than coerced, and
+        floats such as ``1.5`` are rejected rather than truncated.
+
+    Raises
+    ------
+    SchemaError
+        If an input value is neither 0 nor 1 (an H5Col boolean column may hold
+        only those two codes).
     """
     arr = np.asarray(values)
     if arr.dtype == np.bool_:
@@ -71,8 +88,18 @@ def decode_bool(values: Any) -> npt.NDArray[np.bool_]:
 
     Every code must be 0 (FALSE) or 1 (TRUE). A code outside that domain is a
     non-conformant boolean value; H5Col forbids interpreting it as either
-    FALSE or TRUE, so this raises :class:`ConformanceError` instead of silently
-    coercing (NumPy maps every nonzero code to ``True``).
+    FALSE or TRUE, so this raises instead of silently coercing (NumPy maps
+    every nonzero code to ``True``).
+
+    Parameters
+    ----------
+    values:
+        The stored codes, as read from a boolean column's dataset.
+
+    Raises
+    ------
+    ConformanceError
+        If any code is neither 0 nor 1.
     """
     arr = np.asarray(values)
     if not np.all((arr == 0) | (arr == 1)):

@@ -97,6 +97,13 @@ def from_hdf5plugin(obj: Any) -> Filter:
     keyword arguments (``compression`` = filter id, ``compression_opts`` =
     client data) and expose a ``filter_id`` attribute.
 
+    Parameters
+    ----------
+    obj:
+        An ``hdf5plugin`` filter instance such as ``hdf5plugin.Zstd()``.
+        Anything else that converts to such a mapping and carries a filter id
+        also works; the class itself is not required.
+
     Raises
     ------
     FilterError
@@ -146,6 +153,13 @@ class FilterPipeline(Sequence[Filter]):
         object.__setattr__(self, "filters", tuple(_coerce(f) for f in filters))
 
     def __getitem__(self, index: Any) -> Any:
+        """One filter by position, or a tuple of them for a slice.
+
+        Parameters
+        ----------
+        index:
+            An integer position in pipeline order, or a slice.
+        """
         return self.filters[index]
 
     def __len__(self) -> int:
@@ -155,7 +169,14 @@ class FilterPipeline(Sequence[Filter]):
         return iter(self.filters)
 
     def apply(self, dcpl: Any) -> None:
-        """Add every filter, in order, to an HDF5 dataset-creation property list."""
+        """Add every filter, in order, to an HDF5 dataset-creation property list.
+
+        Parameters
+        ----------
+        dcpl:
+            A dataset-creation property list, modified in place. Declaration
+            order is pipeline order, so filters are added exactly as listed.
+        """
         for f in self.filters:
             dcpl.set_filter(f.plugin_id, f.flags, f.cd_values)
 

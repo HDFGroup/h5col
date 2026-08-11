@@ -109,7 +109,10 @@ target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "W", "N", "D"]
+# D417 is switched off by the numpy convention below, so it is named again
+# here to re-enable it: it catches a docstring whose Parameters section covers
+# only some of the signature, which is how parameter documentation rots.
+select = ["E", "F", "I", "UP", "B", "W", "N", "D", "D417"]
 # D105 (magic methods) and D107 (__init__) are documented at the class level,
 # not per-method; the numpy convention already exempts D107.
 # D401 (imperative mood) is not enforced: properties and predicate helpers are

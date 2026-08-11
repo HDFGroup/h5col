@@ -18,7 +18,8 @@ start:
   package.
 
 This chapter goes through what each one hands back, column type by column type,
-and where each falls short.
+then how to read part of a column rather than all of it, and finally where each
+form falls short.
 
 ## Reading into NumPy
 
@@ -161,6 +162,8 @@ fill value and all. That is the same thing `masked=False` would have given you,
 so a lost mask never leaves you worse off than not having asked for one. It is
 still worth avoiding.
 
+### Getting the plain values back
+
 If plain fill values are deliberately needed, `.filled()` is the proper way to get them:
 
 ```python
@@ -171,15 +174,15 @@ table["t_air"].read().filled()
 array([  21.5, -999. ,   23.1], dtype=float32)
 ```
 
-Default NumPy printing of masked array values shows all the sigits, whereas for
-plain arrays it asjust based on the dtype. The numbers are identical and only
-the display changed, but if you are showing values to somebody, rounding first
+Default NumPy printing of masked array values shows all the digits, whereas for
+plain arrays it adjusts based on the dtype. The numbers are identical and only
+the display changes, but if you are showing values to somebody, rounding first
 is worth the trouble. `.tolist()` behaves the same way.
 
 One small oddity: for a column with no missing rows at all, the
 `fill_value` shown in the array's display is a NumPy placeholder such as
-`'N/A'` rather than the column's own. It is never used, `.filled()` on an
-array with nothing masked returns the values untouched, so it is display noise
+`'N/A'` rather than the column's own. It is never used — `.filled()` on an
+array with nothing masked returns the values untouched — so it is display noise
 rather than anything to act on.
 
 ## Strings
@@ -251,7 +254,7 @@ compare and calculate exactly as expected.
 These columns accept the `masked` keyword and ignore it, so you can pass it
 across a whole table without special-casing.
 
-## The complete picture: Arrow
+## Reading into Arrow
 
 Three things a table can hold have no NumPy equivalent at all:
 
@@ -306,6 +309,65 @@ data export feature:
 pip install h5col[arrow]
 ```
 
+## Reading part of a column
+
+Everything so far has read whole columns. When you want some of one, say so
+when you ask, rather than reading it all and slicing the result — the
+difference is real, and on a large column it is not small.
+
+{meth}`Column.read_rows <h5col.Column.read_rows>` takes whatever describes the
+rows you want — a slice, a list of positions, or a boolean array with one entry
+per row — and subscript is the shorter spelling of the same thing:
+
+```python
+col = table["t_air"]
+col[17:98]            # a range
+col[-1]               # one value, not an array of one
+col[[3, 1, 3]]        # any order, repeats allowed
+col[col.is_missing()] # only the missing rows
+```
+
+A range is read in one pass, so asking for part of a column really is cheaper
+than asking for all of it. A negative position counts back from the last row,
+the way it does in a slice. An integer key returns that row's value on its own
+— `numpy.ma.masked` if the row is missing — while every other key returns an
+array, which is how NumPy behaves.
+
+Subscript has nowhere to put a keyword, so it always decodes and always masks.
+Reach for `read` or `read_rows` when you want `masked=False`.
+
+For a whole table rather than one column, select the rows first with
+{meth}`Table.select <h5col.Table.select>` and read from the selection; the
+[queries](../queries/index.md) section covers that properly.
+
+### Ranges in a list column
+
+List columns take the same keys and also read only the rows asked for, though
+they get there differently. A list column's rows are reached through its
+`OFFSETS`, so a range read looks up where that range's values begin and end and
+reads only that span, at every level of nesting. Scattered positions are served
+from the range that spans them — the lowest wanted row to the highest — which
+is never wider than the column itself, so rows near each other cost almost
+nothing and rows at opposite ends cost what the whole column costs.
+
+Reading fifty rows of a 200,000-row list column pulls 251 values rather than a
+million, and takes about 1.5 ms rather than 79 ms.
+
+### Where `to_arrow` fits
+
+`to_arrow` is a different trade. It reads the whole column, so it saves no
+reading at all, but it hands the stored buffers straight to Arrow rather than
+building a Python list for every row — around 4 ms for that same 200,000-row
+column. It suits wanting most of a large column, where a range read suits
+wanting a small part of one.
+
+### `column[...]` is not `column.dataset[...]`
+
+The two are a letter apart and are not the same read. The second goes straight
+to h5py, so it skips decoding, ignores missing values, and can hand back rows
+above `NROWS` that {meth}`~h5col.Table.truncate` left behind as reserved
+storage. Use it when you want the stored bytes and nothing else.
+
 ## Where these forms fall short
 
 Worth knowing to avoid any surprises.
@@ -316,60 +378,20 @@ apart from a row with no value. If empty strings are real data in your model,
 choose a different fill value when creating the column. The
 [missing values](missing-values.md) chapter covers the choice.
 
-**A mask can be lost quietly.** Covered above: several NumPy functions drop it
-without complaint. The `np.ma` versions do not.
+**A mask can be lost quietly.** `np.concatenate`, `np.stack`, `np.append` and
+`np.where` all return arrays that have silently dropped it. The `np.ma`
+equivalents do not.
 
 **List columns cannot carry a mask**, so a table read into NumPy is not
 uniform: most columns are masked arrays, list columns are Python lists. Arrow
 does not have this split.
 
-**Reading a whole column reads the whole column.** Both `read()` and
-`to_arrow()` bring every row into memory. To read part of a table, select rows
-first with {meth}`Table.select <h5col.Table.select>` and read from the
-selection, or use {meth}`Column.read_rows <h5col.Column.read_rows>`, both of
-which fetch only the chunks they need. The [queries](../queries/index.md)
-section covers selection properly.
-
-`read_rows` takes whatever describes the rows you want — a slice, a list of
-positions, or a boolean array with one entry per row — and subscript is the
-shorter spelling of the same thing:
-
-```python
-col = table["t_air"]
-col[17:98]            # a range
-col[-1]               # one value, not an array of one
-col[[3, 1, 3]]        # any order, repeats allowed
-col[col.is_missing()] # only the missing rows
-```
-
-A range is read in a single pass, so asking for part of a column really is
-cheaper than asking for all of it. A negative position counts back from the
-last row, the way it does in a slice. An integer key returns that row's value
-on its own — `numpy.ma.masked` if the row is missing — while every other key
-returns an array, which is how NumPy behaves.
-
-Subscript has nowhere to put a keyword, so it always decodes and always masks.
-Reach for `read` or `read_rows` when you want `masked=False`.
-
-List columns take the same keys and read only the rows asked for, the same as
-scalar ones. They get there differently: a list column's rows are reached
-through its `OFFSETS`, so a range read looks up where that range's values
-begin and end and reads only that span, at every level of nesting. Scattered
-positions are served from the range that spans them — the lowest wanted row to
-the highest — which is never wider than the column itself, so rows near each
-other cost almost nothing and rows at opposite ends cost what the whole column
-costs.
-
-`to_arrow` is a different trade. It reads the whole column, so it saves no
-reading at all, but it hands the stored buffers straight to Arrow rather than
-building a Python list for every row. It is the better choice when you want most
-of a large column; a range read is better when you want a small part of one.
-
-One thing to watch: `column[...]` and `column.dataset[...]` are a letter apart
-and are not the same read. The second goes straight to h5py, so it skips
-decoding, ignores missing values, and can hand back rows above `NROWS` that
-{meth}`~h5col.Table.truncate` left behind as reserved storage. Use it when you
-want the stored bytes and nothing else.
+**A read hands back data, not a handle.** An h5py dataset is a lazy thing: you
+can hold one, slice it later, and nothing is read until you do. What `read()`
+and `to_arrow()` return is the opposite — every row, already in memory, before
+the call comes back. If a column is larger than you want to hold, ask for part
+of it up front, as [reading part of a column](#reading-part-of-a-column)
+describes, rather than reading it whole and slicing afterwards.
 
 **Arrow needs a dependency.** It is optional on purpose: a file written by
 `h5col` can be read with nothing but HDF5, and requiring a large package for

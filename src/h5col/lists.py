@@ -68,6 +68,12 @@ def reject_vlen(dtype: Any) -> None:
     list column, including one hidden inside a compound field or an array
     subtype. h5py's ``check_string_dtype`` / ``check_vlen_dtype`` only inspect
     the top level, so this descends into compound fields and array bases first.
+
+    Parameters
+    ----------
+    dtype:
+        Any dtype, including a compound or array dtype whose members are
+        inspected recursively.
     """
     dt = np.dtype(dtype)
     if dt.subdtype is not None:
@@ -94,7 +100,14 @@ def reject_vlen(dtype: Any) -> None:
 # Spec validation (no file I/O)
 # --------------------------------------------------------------------------- #
 def validate_list_column_spec(spec: ListColumnSpec) -> None:
-    """Validate a list column spec without touching the file."""
+    """Validate a list column spec without touching the file.
+
+    Parameters
+    ----------
+    spec:
+        The spec to check. Its name and its whole ``values`` tree, however
+        deeply nested, are validated.
+    """
     validate_column_name(spec.name)
     _validate_values_spec(spec.values)
 
@@ -248,7 +261,18 @@ def _create_list_level(
 def create_list_column(
     table_group: Any, spec: ListColumnSpec, *, default_chunk_bytes: int | None = None
 ) -> Any:
-    """Create an empty list column group under *table_group* from *spec*."""
+    """Create an empty list column group under *table_group* from *spec*.
+
+    Parameters
+    ----------
+    table_group:
+        The table group to create the column group in.
+    spec:
+        The list column's spec, including its nesting and its leaf values.
+    default_chunk_bytes:
+        Target chunk size for the datasets created here, when the spec sets no
+        explicit ``chunks`` shape.
+    """
     name = validate_column_name(spec.name)
     g = table_group.create_group(name)
     write_ascii_token_attr(g, ATTR_CLASS, CLASS_LIST_COLUMN)
@@ -431,7 +455,18 @@ def _write_string(sv_group: Any, data: _StringData, cur_count: int) -> None:
 
 
 def append_list_column(level_group: Any, rows: list[Any], n_old: int) -> None:
-    """Append *rows* (a list of per-row list values) to a list column group."""
+    """Append *rows* (a list of per-row list values) to a list column group.
+
+    Parameters
+    ----------
+    level_group:
+        The list column group, or an inner nesting level of one.
+    rows:
+        One entry per new row: a list of values, or ``None`` for a null row.
+    n_old:
+        The row count before this append, which is where the new rows are
+        written.
+    """
     data = _encode_level(level_group, rows)
     _write_level(level_group, data, n_old)
 
@@ -450,6 +485,17 @@ def read_list_column(level_group: Any, count: int, *, start: int = 0) -> list[An
     in the child, while the child block just read begins at the range's first
     offset. Every offset therefore has to be rebased against that first one
     before it can index the block.
+
+    Parameters
+    ----------
+    level_group:
+        The list column group, or an inner nesting level of one.
+    count:
+        How many entries to read. Zero or fewer reads nothing and touches no
+        dataset.
+    start:
+        The first row to read. Defaults to 0, so the older two-argument call
+        still reads ``[0, count)``.
     """
     if count <= 0:
         return []
@@ -526,7 +572,16 @@ def _read_string(sv_group: Any, count: int, *, start: int = 0) -> list[Any]:
 # Validation (H5Col consistency rules 10 and 11)
 # --------------------------------------------------------------------------- #
 def validate_list_column(level_group: Any, count: int) -> None:
-    """Validate a list column subtree at *count* entries (recursively)."""
+    """Validate a list column subtree at *count* entries (recursively).
+
+    Parameters
+    ----------
+    level_group:
+        The list column group, or an inner nesting level of one.
+    count:
+        How many entries this level is expected to hold, which its ``OFFSETS``
+        and ``MASK`` extents are checked against.
+    """
     cls = read_str_attr(level_group, ATTR_CLASS)
     if cls != CLASS_LIST_COLUMN:
         raise ConformanceError(

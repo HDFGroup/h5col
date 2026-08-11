@@ -86,12 +86,25 @@ class Table:
     # -- construction ------------------------------------------------------- #
     @staticmethod
     def is_table_group(group: Any) -> bool:
-        """True if *group* is a H5Col table group (lenient CLASS check)."""
+        """True if *group* is a H5Col table group (lenient CLASS check).
+
+        Parameters
+        ----------
+        group:
+            Any h5py group. One that is not a table group answers False rather
+            than raising, so this is safe to use while walking a file.
+        """
         return read_str_attr(group, ATTR_CLASS) == CLASS_COLUMN_TABLE
 
     @classmethod
     def open(cls, group: Any) -> Table:
         """Open an existing table group, checking its CLASS and VERSION major.
+
+        Parameters
+        ----------
+        group:
+            An h5py group already written as a H5Col table. Opening does not
+            read any column data.
 
         Raises
         ------
@@ -127,8 +140,34 @@ class Table:
     ) -> Table:
         """Create a new, empty table (``NROWS = 0``) with the given columns.
 
-        ``default_chunk_bytes`` overrides the automatic (chunk-cache-scaled)
-        target for columns that do not set an explicit ``chunks`` shape.
+        Parameters
+        ----------
+        group:
+            An h5py group to write the table into. It must not already be a
+            H5Col table group.
+        columns:
+            A :class:`~h5col.TableSpec`, or a sequence of
+            :class:`~h5col.ColumnSpec` and :class:`~h5col.ListColumnSpec`.
+        title:
+            Human-readable table title, stored as the ``TITLE`` attribute.
+        description:
+            Longer free text, stored as ``DESCRIPTION``.
+        index_columns:
+            Names of the columns that together identify a row, stored as
+            ``INDEX_COLUMNS``. Every name must be a declared scalar column; a
+            list column cannot be an index column.
+        column_order:
+            The columns' logical order, stored as ``COLUMN_ORDER``. Defaults to
+            the order given in *columns*, which HDF5 itself does not preserve.
+        units_vocabulary:
+            The vocabulary the columns' ``units`` come from, e.g. ``UDUNITS-2``.
+        encoding_type:
+            Producer-defined encoding identifier for the table as a whole.
+        encoding_version:
+            Version string paired with *encoding_type*.
+        default_chunk_bytes:
+            Overrides the automatic (chunk-cache-scaled) target chunk size for
+            columns that do not set an explicit ``chunks`` shape.
 
         Raises
         ------
@@ -390,9 +429,20 @@ class Table:
     ) -> Table:
         """Create a table from column arrays and write them in one call.
 
-        When *specs* is omitted, a :class:`ColumnSpec` is inferred per array
-        (boolean, fixed-string sized to the longest value, or the array dtype).
-        The column order follows ``arrays``.
+        Parameters
+        ----------
+        group:
+            An h5py group to write the table into, as for :meth:`create`.
+        arrays:
+            One array per column, keyed by column name. Every array must hold
+            the same number of rows, and the column order follows this mapping.
+        specs:
+            Column specs to create the table with. When omitted, one is
+            inferred per array — boolean, a fixed-length string sized to the
+            longest value, or the array's own dtype.
+        table_kwargs:
+            Passed through to :meth:`create`, so ``title``, ``index_columns``
+            and the rest are available here too.
         """
         if specs is None:
             specs = [_infer_column_spec(name, arr) for name, arr in arrays.items()]
@@ -499,12 +549,27 @@ class Table:
         return {n: self._wrap(cols[n]) for n in self.column_names}
 
     def __getitem__(self, name: str) -> Column | ListColumn:
+        """The column named *name*, as a :class:`Column` or :class:`ListColumn`.
+
+        Parameters
+        ----------
+        name:
+            A column name. Raises :class:`KeyError` if the table has no such
+            column.
+        """
         cols = self._discover_columns()
         if name not in cols:
             raise KeyError(name)
         return self._wrap(cols[name])
 
     def __contains__(self, name: str) -> bool:
+        """True if the table has a column of this name.
+
+        Parameters
+        ----------
+        name:
+            A column name.
+        """
         return name in self._discover_columns()
 
     def __iter__(self) -> Iterator[str]:
@@ -540,6 +605,16 @@ class Table:
         implementation cannot rebuild — unsupported kinds, element dtypes the
         builder does not handle, non-growable index datasets — are left
         entirely untouched, tokens included.
+
+        Parameters
+        ----------
+        data:
+            New rows, one entry per column, keyed by column name. A
+            :class:`numpy.ma.MaskedArray` is accepted and its masked elements
+            mean the same as ``None``.
+        maintain_indexes:
+            Rebuild the supported search indexes inside the write protocol so
+            they stay valid after the commit, as described above.
 
         Raises
         ------
@@ -673,6 +748,13 @@ class Table:
         nothing is published); growing is an error — that is what
         :meth:`append` is for.
 
+        Parameters
+        ----------
+        nrows:
+            The new row count. Must be between 0 and the current row count.
+        maintain_indexes:
+            As for :meth:`append`.
+
         Raises
         ------
         SchemaError
@@ -721,13 +803,17 @@ class Table:
     ) -> Any:
         """Read columns (default all) as ``{name: array}`` over ``[0, NROWS)``.
 
-        With ``where=`` (a query :class:`~h5col.query.Expression`, a
-        ``List[Tuple]`` = AND, or a ``List[List[Tuple]]`` = OR-of-ANDs), only the
-        matching rows are returned. With ``explain=True`` the return value is a
-        ``(result, QueryPlan)`` pair.
-
         Parameters
         ----------
+        columns:
+            Names to read, in the order given. None (the default) reads every
+            column of the table.
+        where:
+            Restrict the result to matching rows. Takes the same forms as
+            :meth:`select`; None (the default) reads every row.
+        explain:
+            When True the return value becomes a ``(result, QueryPlan)`` pair,
+            the plan describing how the query was evaluated.
         masked:
             Return each scalar column as a :class:`numpy.ma.MaskedArray` whose
             mask marks its missing rows (the default). List columns ignore it,
@@ -774,6 +860,15 @@ class Table:
 
         Needs the optional ``pyarrow`` dependency (``pip install h5col[arrow]``).
 
+        Parameters
+        ----------
+        columns:
+            Names to convert, in the order given. None (the default) converts
+            every column of the table.
+        where:
+            Restrict the result to matching rows. Takes the same forms as
+            :meth:`select`; None (the default) converts every row.
+
         Raises
         ------
         KeyError
@@ -786,14 +881,23 @@ class Table:
     def select(self, where: Any = None) -> query.Selection:
         """Build a lazy :class:`~h5col.query.Selection` over the table.
 
-        Accepts a query :class:`~h5col.query.Expression`, a ``List[Tuple]``
-        (AND), or a ``List[List[Tuple]]`` (OR-of-ANDs, pyarrow DNF). ``None``
-        selects every row.
+        Parameters
+        ----------
+        where:
+            A query :class:`~h5col.query.Expression`, a ``List[Tuple]`` (AND),
+            or a ``List[List[Tuple]]`` (OR-of-ANDs, pyarrow DNF). None (the
+            default) selects every row.
         """
         return query.Selection(self, query._to_expression(where))
 
     def count(self, where: Any = None) -> int:
-        """Number of rows matching *where* (no column materialization)."""
+        """Number of rows matching *where*, without reading any column values.
+
+        Parameters
+        ----------
+        where:
+            As for :meth:`select`. None (the default) counts every row.
+        """
         return self.select(where).count
 
     def build_index(
@@ -804,7 +908,19 @@ class Table:
         name: str | None = None,
         description: str | None = None,
     ) -> SearchIndex:
-        """Build a search index over *column* (alias of :meth:`add_search_index`)."""
+        """Build a search index over *column* (alias of :meth:`add_search_index`).
+
+        Parameters
+        ----------
+        column:
+            As for :meth:`add_search_index`.
+        kind:
+            As for :meth:`add_search_index`.
+        name:
+            As for :meth:`add_search_index`.
+        description:
+            As for :meth:`add_search_index`.
+        """
         return self.add_search_index(column, kind, name=name, description=description)
 
     # -- search indexes ------------------------------------------------------ #
@@ -834,6 +950,20 @@ class Table:
         name is ``<column>__<kind, lowercased>`` — a readable convention only;
         the linkage is the object reference in the column's
         ``SEARCH_INDEX_LIST``.
+
+        Parameters
+        ----------
+        column:
+            Name of the column to index. It must be a scalar column; list
+            columns cannot be indexed.
+        kind:
+            ``CHUNK_MINMAX``, ``SORTED_ROWS`` or ``BITMAP``. None (the default)
+            picks the family that suits the column's datatype, as above.
+        name:
+            Name for the index dataset under ``SEARCH_INDEXES``. None uses the
+            ``<column>__<kind>`` default described above.
+        description:
+            Free text stored on the index as its ``DESCRIPTION`` attribute.
 
         Raises
         ------
@@ -895,7 +1025,13 @@ class Table:
         return indexes.refresh_all_indexes(self._group)
 
     def index_is_valid(self, index: SearchIndex | Any) -> bool:
-        """The H5Col consumer validity check for *index* (wrapper or dataset)."""
+        """The H5Col consumer validity check for *index*.
+
+        Parameters
+        ----------
+        index:
+            A :class:`~h5col.SearchIndex` wrapper or the index dataset itself.
+        """
         ds = index.dataset if isinstance(index, SearchIndex) else index
         return indexes.index_is_valid(ds, self._group)
 
@@ -927,10 +1063,15 @@ class Table:
     def validate(self, *, deep: bool = False) -> None:
         """Check the H5Col consistency requirements, raising on any violation.
 
-        ``deep=True`` additionally re-derives every *valid* search index from
-        its column and compares (consistency rule 9's semantic half) — an
-        O(index build) check; the default run is structural only. A stale index
-        is never an error: the validity check disables it, as the spec intends.
+        A stale index is never an error: the validity check disables it, as the
+        spec intends.
+
+        Parameters
+        ----------
+        deep:
+            When True, additionally re-derive every *valid* search index from
+            its column and compare (consistency rule 9's semantic half), which
+            costs an index build apiece. The default run is structural only.
 
         Raises
         ------
@@ -1065,6 +1206,15 @@ class Table:
         column, or a list column (whose "missing" analogue is a null list that
         would need explicit backfilling), cannot represent pre-existing rows, so
         adding one to a table that already has rows is refused.
+
+        Parameters
+        ----------
+        spec:
+            The new column's :class:`~h5col.ColumnSpec` or
+            :class:`~h5col.ListColumnSpec`. Its name must not already be in use.
+        default_chunk_bytes:
+            As for :meth:`create`: the target chunk size when the spec sets no
+            explicit ``chunks`` shape.
 
         Raises
         ------

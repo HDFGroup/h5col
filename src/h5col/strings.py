@@ -80,7 +80,20 @@ class FixedString:
     def encode_scalar(self, value: object, *, index: int | None = None) -> bytes:
         """Encode a single value to bytes, enforcing the byte budget.
 
-        Raises :class:`OversizedStringError` if the encoding exceeds ``nbytes``.
+        Parameters
+        ----------
+        value:
+            ``bytes`` is stored as given; anything else is passed through
+            ``str()`` and encoded with this type's encoding.
+        index:
+            Position of the value in the array being written, carried into the
+            error message so an oversized row can be located. None when the
+            value did not come from an array.
+
+        Raises
+        ------
+        OversizedStringError
+            If the encoded form exceeds ``nbytes``. Nothing is truncated.
         """
         if isinstance(value, bytes):
             raw = value
@@ -93,8 +106,17 @@ class FixedString:
     def encode(self, values: Any) -> npt.NDArray[np.bytes_]:
         """Encode an array-like of strings to a ``|S{nbytes}`` array.
 
-        No value is ever truncated: the first over-budget value raises
-        :class:`OversizedStringError`.
+        Parameters
+        ----------
+        values:
+            Any array-like of values :meth:`encode_scalar` accepts. The shape
+            is preserved.
+
+        Raises
+        ------
+        OversizedStringError
+            On the first value whose encoding exceeds ``nbytes``, carrying its
+            position. No value is ever truncated.
         """
         arr = np.asarray(values, dtype=object)
         flat = arr.ravel()
@@ -108,7 +130,14 @@ class FixedString:
 
     # -- decoding (stored bytes -> Python str) ------------------------------ #
     def decode_scalar(self, raw: bytes | bytearray | np.bytes_) -> str:
-        """Decode a single stored value to ``str`` (trailing NULs stripped)."""
+        """Decode a single stored value to ``str`` (trailing NULs stripped).
+
+        Parameters
+        ----------
+        raw:
+            One stored value. HDF5 pads a fixed-length string to its full width
+            with NUL bytes, which are stripped before decoding.
+        """
         return bytes(raw).rstrip(b"\x00").decode(self.encoding)
 
     def decode(self, values: Any) -> npt.NDArray[Any]:
@@ -128,6 +157,12 @@ class FixedString:
         :meth:`encode` validates on write — therefore raise
         ``UnicodeDecodeError`` when the offending value is read out of the
         array, not when the column is read.
+
+        Parameters
+        ----------
+        values:
+            An array-like of stored bytes, as read from a fixed-length string
+            dataset. The shape is preserved.
         """
         return np.asarray(values).astype(decoded_string_dtype())
 
@@ -135,6 +170,13 @@ class FixedString:
     @classmethod
     def from_dtype(cls, dtype: Any) -> FixedString:
         """Build a :class:`FixedString` from an existing fixed-length string dtype.
+
+        Parameters
+        ----------
+        dtype:
+            An h5py string dtype, normally taken from an existing dataset. Its
+            length and encoding become the new instance's ``nbytes`` and
+            ``encoding``; an absent encoding defaults to UTF-8.
 
         Raises
         ------
@@ -153,7 +195,14 @@ class FixedString:
 
     @staticmethod
     def is_fixed_string(dtype: Any) -> bool:
-        """Return True if *dtype* is a fixed-length HDF5 string dtype."""
+        """Return True if *dtype* is a fixed-length HDF5 string dtype.
+
+        Parameters
+        ----------
+        dtype:
+            Any dtype. One that is not a string dtype at all, and a
+            variable-length string dtype, both answer False.
+        """
         info = h5py.check_string_dtype(dtype)
         return info is not None and info.length is not None
 
@@ -163,6 +212,12 @@ def ascii_token_dtype(value: str) -> np.dtype:
 
     Used for H5Col reserved-token attributes (``CLASS``, ``VERSION``, ``KIND``),
     whose values are ASCII and are stored null-terminated/null-padded.
+
+    Parameters
+    ----------
+    value:
+        The token the dtype has to hold. Only its encoded length is used, so
+        any token of the same length gives the same dtype.
     """
     nbytes = len(value.encode("ascii")) + 1
     return FixedString(nbytes=nbytes, encoding="ascii").dtype
