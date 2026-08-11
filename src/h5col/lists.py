@@ -439,36 +439,52 @@ def append_list_column(level_group: Any, rows: list[Any], n_old: int) -> None:
 # --------------------------------------------------------------------------- #
 # Reading
 # --------------------------------------------------------------------------- #
-def read_list_column(level_group: Any, count: int) -> list[Any]:
-    """Read entries ``[0, count)`` of a list column as a list of (list | None)."""
-    offs = level_group[MEMBER_OFFSETS][0 : count + 1]
+def read_list_column(level_group: Any, count: int, *, start: int = 0) -> list[Any]:
+    """Read *count* entries from row *start* as a list of (list | None).
+
+    Only the rows asked for are read, at every level of nesting: the range's
+    own ``OFFSETS`` say where its values begin and end in the child, so the
+    child read is narrowed to that span, and so on down.
+
+    The one thing to be careful about is that offsets are absolute positions
+    in the child, while the child block just read begins at the range's first
+    offset. Every offset therefore has to be rebased against that first one
+    before it can index the block.
+    """
+    if count <= 0:
+        return []
+    offs = level_group[MEMBER_OFFSETS][start : start + count + 1]
     mask = None
     if MEMBER_MASK in level_group:
-        mask = decode_bool(level_group[MEMBER_MASK][0:count])
-    child_count = int(offs[count])
-    child_values = _read_values(level_group[MEMBER_VALUES], child_count)
+        mask = decode_bool(level_group[MEMBER_MASK][start : start + count])
+    child_start, child_stop = int(offs[0]), int(offs[count])
+    child_values = _read_values(
+        level_group[MEMBER_VALUES], child_stop - child_start, start=child_start
+    )
     out: list[Any] = []
     for i in range(count):
         if mask is not None and not mask[i]:
             out.append(None)
         else:
-            out.append(child_values[int(offs[i]) : int(offs[i + 1])])
+            lo = int(offs[i]) - child_start
+            hi = int(offs[i + 1]) - child_start
+            out.append(child_values[lo:hi])
     return out
 
 
-def _read_values(obj: Any, count: int) -> list[Any]:
+def _read_values(obj: Any, count: int, *, start: int = 0) -> list[Any]:
     if isinstance(obj, h5py.Dataset):
-        return _read_leaf(obj, count)
+        return _read_leaf(obj, count, start=start)
     cls = read_str_attr(obj, ATTR_CLASS)
     if cls == CLASS_STRING_VALUES:
-        return _read_string(obj, count)
+        return _read_string(obj, count, start=start)
     if cls == CLASS_LIST_COLUMN:
-        return read_list_column(obj, count)
+        return read_list_column(obj, count, start=start)
     raise ConformanceError(f"{obj.name!r}: VALUES group has unexpected CLASS {cls!r}")
 
 
-def _read_leaf(ds: Any, count: int) -> list[Any]:
-    raw = ds[0:count]
+def _read_leaf(ds: Any, count: int, *, start: int = 0) -> list[Any]:
+    raw = ds[start : start + count]
     dtype = ds.dtype
     if is_bool_dtype(dtype):
         return list(decode_bool(raw))
@@ -485,19 +501,24 @@ def _read_leaf(ds: Any, count: int) -> list[Any]:
     return list(raw)
 
 
-def _read_string(sv_group: Any, count: int) -> list[Any]:
-    offs = sv_group[MEMBER_OFFSETS][0 : count + 1]
-    nb = int(offs[count])
-    chars = sv_group[MEMBER_CHARS][0:nb]
+def _read_string(sv_group: Any, count: int, *, start: int = 0) -> list[Any]:
+    if count <= 0:
+        return []
+    offs = sv_group[MEMBER_OFFSETS][start : start + count + 1]
+    # As in read_list_column: CHARS offsets are absolute, the block is not.
+    char_start, char_stop = int(offs[0]), int(offs[count])
+    chars = sv_group[MEMBER_CHARS][char_start:char_stop]
     mask = None
     if MEMBER_MASK in sv_group:
-        mask = decode_bool(sv_group[MEMBER_MASK][0:count])
+        mask = decode_bool(sv_group[MEMBER_MASK][start : start + count])
     out: list[Any] = []
     for j in range(count):
         if mask is not None and not mask[j]:
             out.append(None)
         else:
-            out.append(bytes(chars[int(offs[j]) : int(offs[j + 1])]).decode("utf-8"))
+            lo = int(offs[j]) - char_start
+            hi = int(offs[j + 1]) - char_start
+            out.append(bytes(chars[lo:hi]).decode("utf-8"))
     return out
 
 

@@ -22,15 +22,30 @@ to follow [Semantic Versioning](https://semver.org/).
   dataset, so `if column:` now asks whether the column has rows rather than
   whether the object exists.
 
-  List columns accept the same keys, and gained `read_rows` to match. They are
-  read whole and then narrowed, because a list column's rows are reached
-  through its `OFFSETS` and reading a range of those directly is not
-  implemented yet; `to_arrow` is the cheaper route into part of a large one.
+  List columns accept the same keys, and gained `read_rows` to match.
 
   Note that `column[...]` and `column.dataset[...]` are not the same read. The
   second goes straight to h5py, so it skips decoding, ignores missing values,
   and can return rows above `NROWS` that `truncate` left behind as reserved
   storage.
+
+- **List columns read only the rows asked for.** A list column's rows are
+  reached through its `OFFSETS`, so reading a range means looking up where
+  that range's values start and end and narrowing the child read to that span
+  — recursively, so a nested list or a `STRING_VALUES` group narrows too.
+  Scattered positions are served from the range that spans them, which is
+  never wider than the column itself: rows near each other cost almost
+  nothing, and rows at opposite ends cost what reading the column costs.
+
+  Reading 50 rows of a 200,000-row list column pulls 251 values rather than a
+  million, taking 1.5 ms rather than 79 ms. A single row costs 6 values.
+  `Selection.read` no longer sends list columns down the read-whole path, so a
+  query matching a few rows of a table with a list column went from 84 ms to
+  1.6 ms, of which the list column is now a rounding error.
+
+  `to_arrow` is unchanged and still reads the whole column: it saves no
+  reading but skips building a Python list per row, which suits wanting most
+  of a large column, where a range read suits wanting a small part of one.
 
 - **Row selections take slices, boolean masks and negative positions.**
   `Column.read_rows`, `Column.to_arrow` and everything built on them accept a

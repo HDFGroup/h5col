@@ -20,6 +20,7 @@ from h5col import (
     Table,
     TableSpec,
     bool_dtype,
+    field,
 )
 from h5col._hdf5 import (
     read_str_attr,
@@ -468,3 +469,221 @@ def test_list_reopen_from_disk(h5path: Path) -> None:
         assert _norm(t["id"].read()) == [1, 2]
         assert t["tags"].read() == [["x", "y"], []]
         assert _norm(t["m"].read()) == [[[1, 2]], [[3]]]
+
+
+# --------------------------------------------------------------------------- #
+# Ranged reads
+#
+# A list column's rows are reached through OFFSETS, so reading a range means
+# narrowing the child read to the span those offsets describe — at every level
+# of nesting. Offsets are absolute while the block just read is not, so each
+# level has to rebase them; these tests exist mostly to pin that down.
+# --------------------------------------------------------------------------- #
+
+RANGE_ROWS = 60
+
+
+def _range_table(h5file: h5py.File) -> Table:
+    """Every VALUES form, with null rows, null elements and empty rows."""
+    t = Table.create(
+        h5file.create_group("rt"),
+        [
+            ListColumnSpec(
+                name="nums",
+                values=LeafValuesSpec(dtype="f8", fill_value=-999.0),
+                nullable=True,
+            ),
+            ListColumnSpec(name="tags", values=StringValuesSpec(), nullable=True),
+            ListColumnSpec(name="flags", values=LeafValuesSpec(dtype=bool_dtype())),
+            ListColumnSpec(
+                name="nest",
+                values=NestedListSpec(values=LeafValuesSpec(dtype="i8")),
+                nullable=True,
+            ),
+        ],
+    )
+    t.append(
+        {
+            # Null rows, empty rows, a null element, and varying lengths so no
+            # two rows share an offset pattern.
+            "nums": [
+                None if i % 11 == 0 else [float(i + k) for k in range(i % 4)]
+                for i in range(RANGE_ROWS)
+            ],
+            "tags": [
+                None if i % 13 == 0 else [f"t{i}-{k}" for k in range(i % 3)]
+                for i in range(RANGE_ROWS)
+            ],
+            "flags": [
+                [bool((i + k) % 2) for k in range(i % 3)] for i in range(RANGE_ROWS)
+            ],
+            "nest": [
+                None if i % 17 == 0 else [[i + k] * (k + 1) for k in range(i % 3)]
+                for i in range(RANGE_ROWS)
+            ],
+        }
+    )
+    return t
+
+
+RANGE_COLUMNS = ["nums", "tags", "flags", "nest"]
+RANGES = [
+    (0, 5),
+    (1, 4),
+    (7, 8),
+    (0, RANGE_ROWS),
+    (RANGE_ROWS - 1, RANGE_ROWS),
+    (RANGE_ROWS - 5, RANGE_ROWS),
+    (11, 12),  # a null row on its own
+    (10, 14),  # a null row inside a range
+    (23, 23),  # empty
+]
+
+
+@pytest.mark.parametrize("colname", RANGE_COLUMNS)
+@pytest.mark.parametrize(("start", "stop"), RANGES)
+def test_ranged_read_matches_the_whole_column(
+    h5file: h5py.File, colname: str, start: int, stop: int
+) -> None:
+    col = _range_table(h5file)[colname]
+    whole = col.read()
+    assert _norm(col.read_rows(slice(start, stop))) == _norm(whole[start:stop])
+
+
+@pytest.mark.parametrize("colname", RANGE_COLUMNS)
+def test_ranged_read_keeps_null_rows_distinct_from_empty_ones(
+    h5file: h5py.File, colname: str
+) -> None:
+    col = _range_table(h5file)[colname]
+    whole = col.read()
+    for i in range(RANGE_ROWS):
+        one = col[i]
+        if whole[i] is None:
+            assert one is None, f"row {i} of {colname} lost its null"
+        else:
+            assert one is not None
+            assert _norm(one) == _norm(whole[i])
+
+
+@pytest.mark.parametrize("colname", RANGE_COLUMNS)
+def test_scattered_positions_match_the_whole_column(
+    h5file: h5py.File, colname: str
+) -> None:
+    col = _range_table(h5file)[colname]
+    whole = col.read()
+    for rows in (
+        [5, 2, 5],
+        [0, RANGE_ROWS - 1],
+        [11, 13, 12],
+        [-1, -2],
+        list(range(0, RANGE_ROWS, 7)),
+    ):
+        assert _norm(col.read_rows(rows)) == _norm([whole[i] for i in rows])
+
+
+@pytest.mark.parametrize("colname", RANGE_COLUMNS)
+def test_strided_and_reversed_slices(h5file: h5py.File, colname: str) -> None:
+    col = _range_table(h5file)[colname]
+    whole = col.read()
+    for key in (
+        slice(None, None, -1),
+        slice(2, 40, 5),
+        slice(None, None, 3),
+        slice(-6, None),
+    ):
+        assert _norm(col.read_rows(key)) == _norm(whole[key])
+
+
+def _count_reads(fn: object) -> int:
+    """Total HDF5 elements *fn* pulls, counted at the h5py level."""
+    real = h5py.Dataset.__getitem__
+    total = 0
+
+    def logged(self: object, key: object) -> object:
+        nonlocal total
+        block = real(self, key)
+        total += int(np.size(block))
+        return block
+
+    h5py.Dataset.__getitem__ = logged  # type: ignore[method-assign]
+    try:
+        fn()  # type: ignore[operator]
+    finally:
+        h5py.Dataset.__getitem__ = real  # type: ignore[method-assign]
+    return total
+
+
+@pytest.mark.parametrize("colname", RANGE_COLUMNS)
+def test_a_range_reads_only_that_range(h5file: h5py.File, colname: str) -> None:
+    col = _range_table(h5file)[colname]
+    whole = _count_reads(col.read)
+    ranged = _count_reads(lambda: col.read_rows(slice(10, 15)))
+    assert ranged < whole / 5, (
+        f"{colname}: {ranged} elements is not much less than {whole}"
+    )
+
+
+def test_clustered_positions_read_little_and_spread_ones_are_never_worse(
+    h5file: h5py.File,
+) -> None:
+    col = _range_table(h5file)["nums"]
+    whole = _count_reads(col.read)
+    clustered = _count_reads(lambda: col.read_rows([20, 22, 21]))
+    spread = _count_reads(lambda: col.read_rows([0, RANGE_ROWS - 1]))
+
+    assert clustered < whole / 5
+    # Spanning the column costs what the column costs, and no more.
+    assert spread <= whole
+
+
+def test_single_row_subscript_reads_one_row(h5file: h5py.File) -> None:
+    col = _range_table(h5file)["nest"]
+    whole = _count_reads(col.read)
+    one = _count_reads(lambda: col[30])
+    assert one < whole / 5
+
+
+def test_ranged_read_survives_multiple_appends(h5file: h5py.File) -> None:
+    # Offsets carry across appends, so a range that straddles an append
+    # boundary is the case most likely to expose a rebasing mistake.
+    t = Table.create(
+        h5file.create_group("multi"),
+        [ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="i8"), nullable=True)],
+    )
+    t.append({"xs": [[1], [2, 2], None]})
+    t.append({"xs": [[3, 3, 3], None, [4]]})
+    t.append({"xs": [[], [5, 5]]})
+    col = t["xs"]
+    whole = col.read()
+    for start in range(len(whole)):
+        for stop in range(start, len(whole) + 1):
+            assert _norm(col.read_rows(slice(start, stop))) == _norm(whole[start:stop])
+
+
+def test_selection_read_narrows_a_list_column(h5file: h5py.File) -> None:
+    # Selection.read used to send every list column down the read-whole path,
+    # so a query matching a handful of rows still paid for the entire column.
+    t = Table.create(
+        h5file.create_group("q"),
+        [
+            ColumnSpec(name="i", dtype="i8", fill_value=-1),
+            ListColumnSpec(name="xs", values=LeafValuesSpec(dtype="f8"), nullable=True),
+        ],
+    )
+    n = 300
+    t.append(
+        {
+            "i": list(range(n)),
+            "xs": [None if i % 23 == 0 else [float(i)] * (i % 3) for i in range(n)],
+        }
+    )
+
+    sel = t.select(field("i") >= n - 5)
+    got = sel.read(["xs"])["xs"]
+    whole = t["xs"].read()
+    assert _norm(got) == _norm(whole[-5:])
+
+    xs_whole = _count_reads(t["xs"].read)
+    xs_via_query = _count_reads(lambda: sel.read(["xs"]))
+    # The query still scans "i"; what must shrink is the list column's share.
+    assert xs_via_query - n < xs_whole / 5

@@ -976,8 +976,11 @@ class Selection:
         A scalar column whose matching rows sit in at most
         :data:`GATHER_CHUNK_FRACTION` of its chunks is fetched with
         :meth:`Column.read_rows <h5col.Column.read_rows>`, reading those
-        chunks and no others; otherwise, and for list columns, the column is
-        read whole and then subset. The result is identical either way.
+        chunks and no others; otherwise it is read whole and then subset. A
+        list column is always fetched with
+        :meth:`ListColumn.read_rows <h5col.ListColumn.read_rows>`, which reads
+        the span the matching rows cover and so is never wider than the whole
+        column. The result is identical either way.
 
         Raises
         ------
@@ -997,15 +1000,17 @@ class Selection:
             if name not in cols:
                 raise KeyError(name)
             col = cols[name]
-            if isinstance(col, Column) and _worth_gathering(col, rows, nrows):
+            if not isinstance(col, Column):
+                # A list column narrows to the span its matching rows cover,
+                # which is never wider than reading it whole, so there is no
+                # selectivity to weigh up first.
+                out[name] = col.read_rows(rows)
+                continue
+            if _worth_gathering(col, rows, nrows):
                 # Selective enough to be worth fetching only the wanted chunks.
                 out[name] = col.read_rows(rows, masked=masked)
                 continue
-            full = col.read(masked=masked)
-            if isinstance(full, np.ndarray):
-                out[name] = full[rows]
-            else:  # list column read() returns a Python list
-                out[name] = [full[int(i)] for i in rows]
+            out[name] = col.read(masked=masked)[rows]
         return out
 
     def to_arrow(self, columns: Any = None) -> Any:

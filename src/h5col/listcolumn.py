@@ -52,12 +52,8 @@ class ListColumn:
         and every other key returns a list of rows. Negative positions count
         back from the last row.
 
-        Be aware that this reads the whole column and then narrows it, unlike
-        a scalar column, which reads only the rows asked for. A list column's
-        rows are found through its ``OFFSETS``, and reading a range of those
-        directly is not implemented yet. The answer is the same; the cost is
-        not. :meth:`~h5col.Table.to_arrow` is the cheaper route to part of a
-        large list column.
+        Only the rows asked for are read; see :meth:`read_rows` for what that
+        means when the positions are scattered rather than a range.
 
         Raises
         ------
@@ -81,7 +77,7 @@ class ListColumn:
             # Wrapped in a list so a bare integer gets the same range check,
             # and the same message, as one inside a sequence.
             positions = row_positions([int(key)], self._table.nrows, self.name)
-            return self.read()[int(positions[0])]
+            return lists.read_list_column(self._g, 1, start=int(positions[0]))[0]
         return self.read_rows(key)
 
     def __repr__(self) -> str:
@@ -140,14 +136,27 @@ class ListColumn:
         the same way whatever kind of column it holds. ``masked`` is accepted
         and ignored, as it is by :meth:`read`.
 
-        The whole column is read and then narrowed; see :meth:`__getitem__`
-        for why.
+        A contiguous range is read directly. Scattered positions are served
+        from the range that spans them, from the lowest wanted row to the
+        highest, which is never wider than the column itself: rows that sit
+        near each other cost almost nothing, and rows spread from end to end
+        cost what reading the column costs.
         """
+        n = self._table.nrows
         if isinstance(rows, slice):
-            return self.read()[rows]
-        positions = row_positions(rows, self._table.nrows, self.name)
-        full = self.read()
-        return [full[int(i)] for i in positions]
+            start, stop, step = rows.indices(n)
+            if step == 1:
+                return lists.read_list_column(
+                    self._g, max(0, stop - start), start=start
+                )
+            positions = np.arange(start, stop, step, dtype=np.int64)
+        else:
+            positions = row_positions(rows, n, self.name)
+        if positions.size == 0:
+            return []
+        lo = int(positions.min())
+        span = lists.read_list_column(self._g, int(positions.max()) + 1 - lo, start=lo)
+        return [span[int(i) - lo] for i in positions]
 
     def is_missing(self) -> npt.NDArray[np.bool_]:
         """Boolean mask of null-list rows over ``[0, NROWS)``.

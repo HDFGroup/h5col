@@ -349,9 +349,21 @@ on its own — `numpy.ma.masked` if the row is missing — while every other key
 returns an array, which is how NumPy behaves.
 
 Subscript has nowhere to put a keyword, so it always decodes and always masks.
-Reach for `read` or `read_rows` when you want `masked=False`. List columns take
-the same keys, though they are read whole and then narrowed; `to_arrow` is the
-cheaper way into part of a large one.
+Reach for `read` or `read_rows` when you want `masked=False`.
+
+List columns take the same keys and read only the rows asked for, the same as
+scalar ones. They get there differently: a list column's rows are reached
+through its `OFFSETS`, so a range read looks up where that range's values
+begin and end and reads only that span, at every level of nesting. Scattered
+positions are served from the range that spans them — the lowest wanted row to
+the highest — which is never wider than the column itself, so rows near each
+other cost almost nothing and rows at opposite ends cost what the whole column
+costs.
+
+`to_arrow` is a different trade. It reads the whole column, so it saves no
+reading at all, but it hands the stored buffers straight to Arrow rather than
+building a Python list for every row. It is the better choice when you want most
+of a large column; a range read is better when you want a small part of one.
 
 One thing to watch: `column[...]` and `column.dataset[...]` are a letter apart
 and are not the same read. The second goes straight to h5py, so it skips
