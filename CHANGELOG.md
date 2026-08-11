@@ -61,6 +61,16 @@ to follow [Semantic Versioning](https://semver.org/).
   h5py directly. Asking for half a column is now cheaper than asking for all
   of it; previously it was three times more expensive.
 
+- Example notebook [Reading part of a
+  table](https://hdfgroup.github.io/h5col/notebooks/08_reading_rows.html):
+  subscript and `read_rows` over a 200,000-row table, with every HDF5 read
+  counted so the saving is shown rather than asserted. Scalar columns fetch the
+  chunks their rows land in — two rows at opposite ends cost two chunks, not
+  the span; list columns are served from the range that spans the wanted rows,
+  where reading fifty of them costs 251 values against a million. Also covers
+  masked results from subscript, `masked=False` via `read_rows`, and the
+  difference between `column[...]` and `column.dataset[...]`.
+
 - **Every parameter of every public callable is documented.** An audit of the
   source found 114 public functions and methods whose docstring left at least
   one parameter of its signature undescribed — 207 parameters in all, of which

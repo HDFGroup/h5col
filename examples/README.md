@@ -13,6 +13,7 @@ dataset.
 | [`05_json_logs.ipynb`](05_json_logs.ipynb) | Modeling semi-structured JSON log records as H5Col columns and list columns. |
 | [`06_nyc_taxi.ipynb`](06_nyc_taxi.ipynb) | A real dataset (NYC yellow-taxi trips): categoricals, missing values, an `int64` datetime codec, filters, and the query layer driven by `BITMAP` / `SORTED_ROWS` / `CHUNK_MINMAX` indexes. |
 | [`07_arrow_export.ipynb`](07_arrow_export.ipynb) | `to_arrow()`: missing values as real nulls, categoricals as Arrow dictionaries, list columns with their nesting intact, column attributes as field metadata, and the hop to pandas and Parquet. Needs the optional `pyarrow` dependency. |
+| [`08_reading_rows.ipynb`](08_reading_rows.ipynb) | Reading part of a table: subscript and `read_rows` on 200,000 rows, with the reads counted — chunk-coalesced for scalar columns, spanning ranges for list columns — plus `column[...]` versus `column.dataset[...]`. |
 
 ## Running them
 

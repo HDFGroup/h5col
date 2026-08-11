@@ -21,6 +21,7 @@ environment already has.
 | {doc}`JSON logs <notebooks/05_json_logs>` | Modeling semi-structured log records with columns and list columns. |
 | {doc}`NYC taxi trips <notebooks/06_nyc_taxi>` | A real dataset end to end: categoricals, both missing-value styles, a datetime codec, filters, and indexed queries with `explain()`. |
 | {doc}`Exporting to Arrow <notebooks/07_arrow_export>` | `to_arrow()`: real nulls instead of fill values, categoricals as dictionaries, list columns intact, column attributes carried as field metadata, and the hop to pandas and Parquet. |
+| {doc}`Reading part of a table <notebooks/08_reading_rows>` | Subscript and `read_rows` on a 200,000-row table, measuring what a range actually reads: chunk-coalesced reads for scalar columns, spanning ranges for list columns, and the `column[...]` versus `column.dataset[...]` trap. |
 
 ```{toctree}
 :hidden:
@@ -33,4 +34,5 @@ notebooks/04_filters_and_storage
 notebooks/05_json_logs
 notebooks/06_nyc_taxi
 notebooks/07_arrow_export
+notebooks/08_reading_rows
 ```
