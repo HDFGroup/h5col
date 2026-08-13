@@ -4,6 +4,8 @@ All notable changes to H5Col are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
 ## [0.3.0] - 2026-08-11
 
 ### Added
@@ -92,7 +94,7 @@ to follow [Semantic Versioning](https://semver.org/).
   commit a tag points at does not report the version the tag claims, or when a
   release tag carries a pre-release version.
 - The missing-value documentation no longer uses "sentinel". H5Col's marker for
-  a missing row is simply the column's fill value.The reference pages keep the
+  a missing row is simply the column's fill value. The reference pages keep the
   convention's own term, "the canonical missing-value test".
 - The [Reading into
   Python](https://hdfgroup.github.io/h5col/guide/reading-into-python.html)
