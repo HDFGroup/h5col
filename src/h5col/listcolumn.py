@@ -38,11 +38,17 @@ class ListColumn:
         self._table = table
 
     def __len__(self) -> int:
-        """The number of rows in the column, which is the table's ``NROWS``."""
+        """The number of rows in the column, which is the table's ``NROWS``.
+
+        .. versionadded:: 0.3.0
+        """
         return int(self._table.nrows)
 
     def __iter__(self) -> Iterator[Any]:
-        """Iterate the rows, each a list or ``None``."""
+        """Iterate the rows, each a list or ``None``.
+
+        .. versionadded:: 0.3.0
+        """
         return iter(self.read())
 
     def __getitem__(self, key: Any) -> Any:
@@ -54,6 +60,8 @@ class ListColumn:
 
         Only the rows asked for are read; see :meth:`read_rows` for what that
         means when the positions are scattered rather than a range.
+
+        .. versionadded:: 0.3.0
 
         Parameters
         ----------
@@ -146,6 +154,8 @@ class ListColumn:
         highest, which is never wider than the column itself: rows that sit
         near each other cost almost nothing, and rows spread from end to end
         cost what reading the column costs.
+
+        .. versionadded:: 0.3.0
 
         Parameters
         ----------

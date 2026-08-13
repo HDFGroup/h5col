@@ -1039,6 +1039,8 @@ class Selection:
 
         As :meth:`h5col.Table.to_arrow`, restricted to the matching rows.
 
+        .. versionadded:: 0.2.0
+
         Parameters
         ----------
         columns:

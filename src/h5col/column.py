@@ -46,7 +46,10 @@ class Column:
         self._table = table
 
     def __len__(self) -> int:
-        """The number of rows in the column, which is the table's ``NROWS``."""
+        """The number of rows in the column, which is the table's ``NROWS``.
+
+        .. versionadded:: 0.3.0
+        """
         return int(self._table.nrows)
 
     def __iter__(self) -> Iterator[Any]:
@@ -55,6 +58,8 @@ class Column:
         Defined so that iterating reads the column once. Without it Python
         falls back on :meth:`__getitem__` and fetches every row separately,
         which is one HDF5 read per row.
+
+        .. versionadded:: 0.3.0
         """
         return iter(self.read())
 
@@ -68,6 +73,8 @@ class Column:
         This is :meth:`read_rows` with the defaults. Subscript has nowhere to
         put a keyword, so it always decodes and always masks; call
         :meth:`read` or :meth:`read_rows` when you want ``masked=False``.
+
+        .. versionadded:: 0.3.0
 
         Parameters
         ----------
@@ -401,6 +408,8 @@ class Column:
 
         Needs the optional ``pyarrow`` dependency (``pip install
         h5col[arrow]``).
+
+        .. versionadded:: 0.2.0
 
         Parameters
         ----------

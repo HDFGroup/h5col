@@ -5,6 +5,12 @@ which is the intended way to use the library. The pages group the public API
 by topic; each entry's full documentation, including the exceptions it can
 raise, is generated from the docstrings in the source.
 
+Anything added after the first release carries a *New in version* note. An
+entry without one has been there since 0.1.0. These pages are built from
+`main`, so they may describe something no release has yet — check the note
+against the version you installed, and see the [changelog](../about/changelog.md)
+for the full history.
+
 ```{toctree}
 :maxdepth: 1
 

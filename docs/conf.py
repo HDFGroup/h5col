@@ -30,6 +30,32 @@ def _latest_release() -> str:
     raise RuntimeError(f"no released version heading found in {changelog}")
 
 
+def _check_version_directives() -> None:
+    """Fail the build on a ``versionadded``/``versionchanged`` typo.
+
+    Sphinx renders whatever version string it is given, so ``0.30`` for
+    ``0.3.0`` would look perfectly normal on the page. Every version named in a
+    directive has to match a release heading in the changelog, or the version
+    this branch is working towards — new API is annotated with the release it
+    will ship in, which has no changelog heading yet.
+    """
+    changelog = (_REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    known = set(re.findall(r"^##\s*\[(\d+\.\d+\.\d+)\]", changelog, re.M))
+    known.add(h5col.__version__.split(".dev")[0])
+
+    bad: list[str] = []
+    for path in sorted((_REPO / "src" / "h5col").glob("*.py")):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            found = re.search(r"\.\.\s+version(?:added|changed)::\s*(\S+)", line)
+            if found and found.group(1) not in known:
+                bad.append(f"{path.name}:{line_no} names version {found.group(1)}")
+    if bad:
+        raise RuntimeError(
+            "version directives name versions that are neither a release nor "
+            f"the one in development ({sorted(known)}):\n  " + "\n  ".join(bad)
+        )
+
+
 def _check_pinned_install_version(latest: str) -> None:
     """Fail the build if the installation page pins a stale version.
 
@@ -56,6 +82,7 @@ version = h5col.__version__
 release = h5col.__version__
 latest_release = _latest_release()
 _check_pinned_install_version(latest_release)
+_check_version_directives()
 
 # -- General -----------------------------------------------------------------
 extensions = [

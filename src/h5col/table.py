@@ -573,9 +573,11 @@ class Table:
         return name in self._discover_columns()
 
     def __iter__(self) -> Iterator[str]:
+        """Iterate the column names, in the table's logical column order."""
         return iter(self.column_names)
 
     def __len__(self) -> int:
+        """The number of columns in the table (its rows are :attr:`nrows`)."""
         return len(self._discover_columns())
 
     # -- writing ------------------------------------------------------------ #
@@ -859,6 +861,8 @@ class Table:
         metadata under an ``h5col.`` prefix.
 
         Needs the optional ``pyarrow`` dependency (``pip install h5col[arrow]``).
+
+        .. versionadded:: 0.2.0
 
         Parameters
         ----------
