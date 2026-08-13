@@ -1,0 +1,10 @@
+{#- The newest released version, linked to the changelog.
+
+    Deliberately not the version these pages were built from: the site is
+    published from `main`, which carries a .devN version between releases. The
+    changelog page is linked rather than a particular release heading, because
+    those headings get positional anchors (#id1, #id2) that shift down by one
+    every time a release is added.
+-#}
+<a class="h5col-latest-release" href="{{ pathto('about/changelog') }}"
+   title="{{ _('Latest release — open the changelog') }}">v{{ latest_release }}</a>

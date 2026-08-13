@@ -5,6 +5,11 @@ its repository at
 [github.com/HDFGroup/h5col](https://github.com/HDFGroup/h5col). The package is
 pure Python; all of its binary needs are covered by its dependencies.
 
+The latest release is **v0.3.0**, and the commands below install it. Note that
+these pages are built from `main`, which carries the work done since that
+release, so they may describe something a release does not have yet. Drop the
+`@v0.3.0` from any command to follow `main` instead.
+
 ## Requirements
 
 - Python ≥ 3.11
@@ -25,7 +30,7 @@ It creates the conda-based environment and installs `h5col` into it in editable
 mode:
 
 ```bash
-git clone https://github.com/HDFGroup/h5col.git
+git clone --branch v0.3.0 https://github.com/HDFGroup/h5col.git
 cd h5col
 pixi install
 pixi run python -c "import h5col; print(h5col.__version__)"
@@ -36,14 +41,14 @@ pixi run python -c "import h5col; print(h5col.__version__)"
 Inside a virtual environment, either install straight from the repository:
 
 ```bash
-pip install git+https://github.com/HDFGroup/h5col.git
+pip install git+https://github.com/HDFGroup/h5col.git@v0.3.0
 ```
 
 or from a clone, which is the better choice if you want the examples and
 tests:
 
 ```bash
-git clone https://github.com/HDFGroup/h5col.git
+git clone --branch v0.3.0 https://github.com/HDFGroup/h5col.git
 cd h5col
 pip install .
 ```
@@ -60,7 +65,7 @@ itself with pip:
 conda create -n h5col -c conda-forge "python>=3.11" "h5py>=3.11" "hdf5>=2.1" \
     "numpy>=2.0" "hdf5plugin>=4.0" "pydantic>=2.5"
 conda activate h5col
-pip install git+https://github.com/HDFGroup/h5col.git
+pip install git+https://github.com/HDFGroup/h5col.git@v0.3.0
 ```
 
 ## For development
