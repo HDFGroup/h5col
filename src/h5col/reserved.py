@@ -201,3 +201,49 @@ def is_discouraged_column_name(name: str) -> bool:
         the convention, not rejected.
     """
     return name.startswith("_")
+
+
+#: Attribute names H5Col itself writes on a column, beyond the reserved set.
+#: These are not reserved *names* — a column may legitimately be called
+#: ``units`` — but a producer attribute of the same name would land on the very
+#: attribute the convention writes there, so free-form metadata may not use one.
+COLUMN_ANNOTATION_NAMES = frozenset(
+    {
+        ATTR_UNITS,
+        ATTR_UNITS_VOCABULARY,
+        ATTR_DESCRIPTION,
+        ATTR_ORDERED,
+    }
+)
+
+
+def validate_attribute_names(attributes: dict[str, object] | None, column: str) -> None:
+    """Check that producer attribute names do not shadow H5Col's own.
+
+    Parameters
+    ----------
+    attributes:
+        Extra attributes destined for a column, or None.
+    column:
+        The column's name, used only to make the error message specific.
+
+    Raises
+    ------
+    SchemaError
+        If a name is not a valid HDF5 attribute name.
+    ReservedNameError
+        If a name is one H5Col reserves. The convention gives those names a
+        meaning, so a producer's own metadata must not occupy them — a
+        ``CLASS`` or ``NROWS`` attribute written as free-form metadata would
+        make the column unreadable.
+    """
+    for name in attributes or {}:
+        if not is_valid_link_name(name):
+            raise SchemaError(
+                f"{name!r} is not a valid HDF5 attribute name (column {column!r})"
+            )
+        if name in RESERVED_ATTRIBUTE_NAMES or name in COLUMN_ANNOTATION_NAMES:
+            raise ReservedNameError(
+                f"{name!r} is an attribute name H5Col writes itself and cannot "
+                f"be used as producer metadata on column {column!r}"
+            )

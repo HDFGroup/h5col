@@ -24,6 +24,7 @@ from ._hdf5 import (
     read_uint64_attr,
     substitute_fill_for_none,
     write_ascii_token_attr,
+    write_extra_attributes,
     write_uint64_attr,
     write_utf8_array_attr,
     write_utf8_attr,
@@ -58,6 +59,7 @@ from .reserved import (
     KIND_CHUNK_MINMAX,
     KIND_SORTED_ROWS,
     MEMBER_MASK,
+    validate_attribute_names,
     validate_column_name,
 )
 from .searchindex import SearchIndex, wrap_index
@@ -262,6 +264,7 @@ class Table:
     @staticmethod
     def _validate_column_spec(col: ColumnSpec | ListColumnSpec) -> None:
         """Validate one column spec without touching the file."""
+        validate_attribute_names(col.attributes, col.name)
         if isinstance(col, ListColumnSpec):
             lists.validate_list_column_spec(col)
             return
@@ -372,6 +375,7 @@ class Table:
             write_utf8_attr(ds, ATTR_UNITS_VOCABULARY, col.units_vocabulary)
         if col.description is not None:
             write_utf8_attr(ds, ATTR_DESCRIPTION, col.description)
+        write_extra_attributes(ds, col.attributes)
         return ds
 
     @staticmethod

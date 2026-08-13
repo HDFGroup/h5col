@@ -36,8 +36,9 @@ import numpy.typing as npt
 
 from . import categorical, missing
 from ._hdf5 import read_str_attr, row_positions
-from .booleans import decode_bool, is_bool_dtype
-from .exceptions import ConformanceError
+from .booleans import bool_dtype, decode_bool, is_bool_dtype
+from .categorical import choose_code_dtype
+from .exceptions import ConformanceError, SchemaError
 from .reserved import (
     ATTR_CLASS,
     ATTR_DESCRIPTION,
@@ -50,6 +51,15 @@ from .reserved import (
     MEMBER_MASK,
     MEMBER_OFFSETS,
     MEMBER_VALUES,
+    validate_attribute_names,
+    validate_column_name,
+)
+from .specs import (
+    ColumnSpec,
+    LeafValuesSpec,
+    ListColumnSpec,
+    NestedListSpec,
+    StringValuesSpec,
 )
 from .strings import FixedString
 
@@ -445,3 +455,295 @@ def list_array(group: Any, count: int) -> Any:
         [_mask_validity(group, count), _offsets_buffer(group[MEMBER_OFFSETS], count)],
         children=[child],
     )
+
+
+# --------------------------------------------------------------------------- #
+# Import: Arrow schema -> H5Col specs
+#
+# The inverse of the export above is not a mirror image, because the mapping is
+# not onto: Arrow has types H5Col cannot hold, permits column names HDF5 cannot
+# store, and marks missing values with a null rather than a value drawn from the
+# column's own domain. Everything that cannot be represented exactly is refused
+# here, by name, rather than approximated.
+# --------------------------------------------------------------------------- #
+
+#: Arrow primitive types that map to a NumPy dtype one-for-one.
+_PRIMITIVE_DTYPES = {
+    "int8": "int8",
+    "int16": "int16",
+    "int32": "int32",
+    "int64": "int64",
+    "uint8": "uint8",
+    "uint16": "uint16",
+    "uint32": "uint32",
+    "uint64": "uint64",
+    "float": "float32",
+    "double": "float64",
+}
+
+#: Why each unsupported family is refused, so the error can say something useful.
+_UNSUPPORTED = {
+    "timestamp": "H5Col has no datetime type; store the epoch offsets as an "
+    "integer column and describe the encoding in its attributes",
+    "date": "H5Col has no date type; store the day or epoch offsets as an "
+    "integer column",
+    "time": "H5Col has no time type; store the offsets as an integer column",
+    "duration": "H5Col has no duration type; store the count as an integer column",
+    "decimal": "H5Col has no decimal type; store the unscaled integer and its "
+    "scale separately",
+    "struct": "H5Col columns are rank-1; flatten the struct into one column per field",
+    "map": "H5Col has no map type",
+    "union": "H5Col has no union type",
+    "null": "a column of only nulls has no datatype to store",
+    "binary": "H5Col stores text, not opaque bytes; a fixed-length string column "
+    "needs a known encoding",
+    "fixed_size_list": "H5Col list columns are variable-length; convert to a "
+    "list type first",
+}
+
+#: Metadata keys under ``h5col.`` that this importer understands.
+_KNOWN_METADATA = frozenset(
+    {"units", "units_vocabulary", "description", "valid_min", "valid_max", "ordered"}
+)
+
+
+def _refuse(field: Any) -> None:
+    """Raise for an Arrow type H5Col cannot represent exactly."""
+    name = str(field.type)
+    for family, why in _UNSUPPORTED.items():
+        if name.startswith(family):
+            raise SchemaError(
+                f"column {field.name!r}: Arrow type {name} cannot be stored in "
+                f"H5Col — {why}"
+            )
+    raise SchemaError(
+        f"column {field.name!r}: Arrow type {name} is not supported by this importer"
+    )
+
+
+def _decoded_metadata(field: Any) -> dict[str, str]:
+    """*field*'s metadata as ``str`` keys and values (Arrow stores bytes)."""
+    raw = field.metadata or {}
+    return {
+        (k.decode() if isinstance(k, bytes) else k): (
+            v.decode() if isinstance(v, bytes) else v
+        )
+        for k, v in raw.items()
+    }
+
+
+def _parse_bound(text: str, dtype: Any) -> Any:
+    """Parse a stringified ``valid_min``/``valid_max`` back to the column's dtype.
+
+    :func:`column_metadata` writes these with ``str``, so they arrive as text and
+    have to be read back against the datatype they belong to rather than
+    guessed. ``np.dtype(None)`` is ``float64``, so a caller with no dtype in
+    hand must not reach this — it would turn any bound into a float in silence.
+    """
+    if dtype is None:
+        raise SchemaError(f"cannot read the bound {text!r} without a datatype")
+    try:
+        return np.dtype(dtype).type(text)
+    except (TypeError, ValueError) as exc:
+        raise SchemaError(f"cannot read {text!r} as a {np.dtype(dtype)} bound") from exc
+
+
+#: Annotations every kind of column spec can hold.
+_COMMON_METADATA = frozenset({"units", "units_vocabulary", "description"})
+
+#: Plus the valid range, which only a scalar column has a datatype to express.
+_SCALAR_METADATA = _COMMON_METADATA | {"valid_min", "valid_max"}
+
+
+def _annotations(field: Any, dtype: Any, *, allowed: frozenset[str]) -> dict[str, Any]:
+    """Split *field*'s metadata into H5Col annotations and producer attributes.
+
+    Keys under ``h5col.`` are the ones :func:`column_metadata` wrote and become
+    the column's own annotations. Every other key is carried across as a
+    producer attribute, where a name H5Col reserves is refused — otherwise a
+    field carrying, say, a bare ``units`` key would silently shadow the value
+    taken from ``h5col.units``.
+
+    Parameters
+    ----------
+    field:
+        The Arrow field whose metadata is being read.
+    dtype:
+        The column's datatype, which ``valid_min``/``valid_max`` are parsed
+        against. None where the column kind has no scalar datatype.
+    allowed:
+        Which annotations this kind of column can hold. A spec model silently
+        drops a field it does not define, so a key that cannot be stored is
+        refused here rather than disappearing.
+    """
+    out: dict[str, Any] = {}
+    extra: dict[str, Any] = {}
+    for key, value in _decoded_metadata(field).items():
+        if not key.startswith(METADATA_PREFIX):
+            extra[key] = value
+            continue
+        short = key[len(METADATA_PREFIX) :]
+        if short not in _KNOWN_METADATA:
+            raise SchemaError(
+                f"column {field.name!r}: unknown {METADATA_PREFIX}{short!r} "
+                f"metadata key; this importer understands "
+                f"{sorted(_KNOWN_METADATA)}"
+            )
+        if short not in allowed:
+            raise SchemaError(
+                f"column {field.name!r}: a {str(field.type)} column cannot carry "
+                f"{METADATA_PREFIX}{short}"
+            )
+        if short in ("valid_min", "valid_max"):
+            out[short] = _parse_bound(value, dtype)
+        elif short == "ordered":
+            out[short] = value.lower() == "true"
+        else:
+            out[short] = value
+    validate_attribute_names(extra, field.name)
+    if extra:
+        out["attributes"] = extra
+    return out
+
+
+def _max_utf8_bytes(chunked: Any) -> int:
+    """Widest encoded value in a string column, which sizes its fixed width.
+
+    Scanning is the only way to learn this: Arrow strings are variable-length
+    and H5Col's are not. The column is therefore sized to its data, so a later
+    append of a longer value raises rather than truncating — pass a
+    :class:`~h5col.ColumnSpec` to choose a wider budget deliberately.
+    """
+    widest = 0
+    for chunk in chunked.chunks:
+        for value in chunk.to_pylist():
+            if value is not None:
+                widest = max(widest, len(value.encode("utf-8")))
+    return max(1, widest)
+
+
+def _values_spec_from_type(field_name: str, arrow_type: Any, nullable: bool) -> Any:
+    """The ``VALUES`` member for one level of a list column."""
+    pa = require_pyarrow()
+    if pa.types.is_large_string(arrow_type) or pa.types.is_string(arrow_type):
+        return StringValuesSpec(nullable=nullable)
+    if pa.types.is_large_list(arrow_type) or pa.types.is_list(arrow_type):
+        inner = arrow_type.value_type
+        return NestedListSpec(
+            values=_values_spec_from_type(field_name, inner, nullable),
+            nullable=nullable,
+        )
+    key = str(arrow_type)
+    if pa.types.is_boolean(arrow_type):
+        return LeafValuesSpec(dtype=bool_dtype())
+    if key in _PRIMITIVE_DTYPES:
+        return LeafValuesSpec(dtype=np.dtype(_PRIMITIVE_DTYPES[key]))
+    raise SchemaError(
+        f"column {field_name!r}: Arrow list element type {key} cannot be stored "
+        f"in H5Col"
+    )
+
+
+def _spec_from_field(field: Any, column: Any) -> Any:
+    """One :class:`ColumnSpec` or :class:`ListColumnSpec` for one Arrow field."""
+    pa = require_pyarrow()
+    ty = field.type
+    key = str(ty)
+
+    if pa.types.is_large_list(ty) or pa.types.is_list(ty):
+        # A null anywhere below the top level needs somewhere to go, and the
+        # element mask is the only place a list column has.
+        nullable = column.null_count > 0
+        return ListColumnSpec(
+            name=field.name,
+            values=_values_spec_from_type(field.name, ty.value_type, nullable=True),
+            nullable=nullable,
+            **_annotations(field, None, allowed=_COMMON_METADATA),
+        )
+
+    if pa.types.is_dictionary(ty):
+        unified = column.unify_dictionaries()
+        labels = unified.chunk(0).dictionary.to_pylist() if unified.num_chunks else []
+        codes = choose_code_dtype(len(labels))
+        annotations = _annotations(field, codes, allowed=_COMMON_METADATA | {"ordered"})
+        # Arrow's own flag is authoritative; h5col.ordered is the fallback for a
+        # table written before the export set the Arrow type's flag.
+        annotations.setdefault("ordered", ty.ordered)
+        return ColumnSpec(name=field.name, categories=labels, **annotations)
+
+    if pa.types.is_boolean(ty):
+        return ColumnSpec(
+            name=field.name,
+            dtype=bool_dtype(),
+            **_annotations(field, None, allowed=_COMMON_METADATA),
+        )
+
+    if pa.types.is_large_string(ty) or pa.types.is_string(ty):
+        text = FixedString(_max_utf8_bytes(column))
+        return ColumnSpec(
+            name=field.name,
+            dtype=text,
+            **_annotations(field, text.dtype, allowed=_SCALAR_METADATA),
+        )
+
+    if key in _PRIMITIVE_DTYPES:
+        numeric = np.dtype(_PRIMITIVE_DTYPES[key])
+        return ColumnSpec(
+            name=field.name,
+            dtype=numeric,
+            **_annotations(field, numeric, allowed=_SCALAR_METADATA),
+        )
+
+    _refuse(field)
+
+
+def specs_from_arrow(table: Any) -> list[Any]:
+    """The column specs this package would import an Arrow table with.
+
+    Returned so they can be inspected and adjusted before anything is written.
+    Chunking and filters have no Arrow equivalent and so cannot be inferred at
+    all. The string widths and category sets are inferred from the data, which
+    is worth checking on a table you did not write::
+
+        specs = h5col.specs_from_arrow(tbl)
+        specs[2].chunks = 8192
+        specs[2].filters = FilterPipeline([Shuffle(), Deflate(4)])
+
+    Nothing is read from or written to a file here.
+
+    Arrow's model is wider than H5Col's, so a type with no exact H5Col
+    equivalent is refused by name rather than approximated — timestamps, dates,
+    times, durations, decimals, structs, maps, unions, opaque binary and
+    fixed-size lists among them.
+
+    Field metadata under ``h5col.`` becomes the column's own annotations, the
+    same keys :func:`column_metadata` writes. Any other metadata is carried
+    across as a producer attribute, unless its name is one H5Col reserves.
+
+    Parameters
+    ----------
+    table:
+        A :class:`pyarrow.Table`.
+
+    Raises
+    ------
+    SchemaError
+        If two fields share a name (HDF5 links are unique), if a column's type
+        has no H5Col equivalent, or if a ``h5col.`` metadata key is not one this
+        importer understands.
+    ReservedNameError
+        If a column name, or a producer metadata key, is a name H5Col reserves.
+    """
+    require_pyarrow()
+    names = list(table.schema.names)
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise SchemaError(
+            f"Arrow fields {duplicates} appear more than once; H5Col column "
+            f"names are HDF5 links and must be unique"
+        )
+    specs = []
+    for field in table.schema:
+        validate_column_name(field.name)
+        specs.append(_spec_from_field(field, table.column(field.name)))
+    return specs

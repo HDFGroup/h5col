@@ -410,3 +410,25 @@ def read_uint64_attr(obj: Any, name: str) -> int | None:
 
 def has_attr(obj: Any, name: str) -> bool:
     return name in obj.attrs
+
+
+def write_extra_attributes(target: Any, attributes: dict[str, Any] | None) -> None:
+    """Write producer-supplied attributes onto a column.
+
+    Names are validated separately, before anything is created, so that an
+    invalid one cannot leave a half-built column behind.
+
+    Parameters
+    ----------
+    target:
+        The dataset or group to write on.
+    attributes:
+        Name-to-value mapping, or None. ``str`` values are written as UTF-8;
+        everything else goes through NumPy, so ints, floats, bools and arrays
+        keep their datatype rather than being stringified.
+    """
+    for name, value in (attributes or {}).items():
+        if isinstance(value, str):
+            write_utf8_attr(target, name, value)
+        else:
+            target.attrs.create(name, np.asarray(value))

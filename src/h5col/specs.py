@@ -49,6 +49,10 @@ class ColumnSpec(BaseModel):
     description: str | None = None
     categories: list[Any] | None = None
     ordered: bool | None = None
+    #: Extra HDF5 attributes to write on the column, beyond the ones H5Col
+    #: defines. A name that collides with a reserved attribute name is refused
+    #: at creation, so producer metadata can never shadow the convention's own.
+    attributes: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _check_dtype(self) -> ColumnSpec:
@@ -159,6 +163,8 @@ class ListColumnSpec(BaseModel):
     units: str | None = None
     units_vocabulary: str | None = None
     description: str | None = None
+    #: As :attr:`ColumnSpec.attributes`.
+    attributes: dict[str, Any] | None = None
 
 
 # Resolve the forward references in the recursive union.

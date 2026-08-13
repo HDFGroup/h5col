@@ -15,6 +15,7 @@ from __future__ import annotations
 import hdf5plugin as _hdf5plugin  # noqa: F401
 
 from . import indexes, lists, missing, ordering, references, reserved
+from .arrow import specs_from_arrow
 from .booleans import bool_dtype, decode_bool, encode_bool, is_bool_dtype
 from .column import Column
 from .exceptions import (
@@ -90,6 +91,8 @@ __all__ = [
     "is_bool_dtype",
     "encode_bool",
     "decode_bool",
+    # arrow interchange
+    "specs_from_arrow",
     # filters
     "Filter",
     "FilterPipeline",
