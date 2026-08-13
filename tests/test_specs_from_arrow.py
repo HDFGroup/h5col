@@ -327,3 +327,138 @@ def test_round_trip_from_a_h5col_table(h5file: h5py.File) -> None:
     assert list(rebuilt["k"].categories) == ["a", "b"]
     assert rebuilt["k"].ordered is True
     assert rebuilt["f"].is_boolean
+
+
+# --------------------------------------------------------------------------- #
+# Fill values
+#
+# Arrow marks a missing value with a null; H5Col marks one with a value from the
+# column's own domain. Choosing that value is the part of importing that can go
+# silently wrong, so most of what follows is about refusing to choose badly.
+# --------------------------------------------------------------------------- #
+def test_a_fill_is_chosen_for_an_ordinary_column() -> None:
+    from h5col import recommended_fill
+
+    spec = _one(_field_table("v", pa.int32(), [1, None, 3]))
+    assert spec.fill_value == recommended_fill(np.dtype("int32"))
+
+
+@pytest.mark.parametrize(
+    ("arrow_type", "dtype"),
+    [(pa.int8(), "int8"), (pa.int16(), "int16"), (pa.uint8(), "uint8")],
+)
+def test_a_fill_already_in_the_data_is_refused(arrow_type: Any, dtype: str) -> None:
+    from h5col import recommended_fill
+
+    collides = recommended_fill(np.dtype(dtype)).item()
+    table = _field_table("v", arrow_type, [collides, 1, None])
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        specs_from_arrow(table)
+
+
+def test_the_collision_is_refused_even_with_no_nulls() -> None:
+    # The defect does not depend on Arrow having had nulls: once the column is
+    # written, that row reads as missing either way.
+    from h5col import recommended_fill
+
+    collides = recommended_fill(np.dtype("int8")).item()
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        specs_from_arrow(_field_table("v", pa.int8(), [collides, 1]))
+
+
+def test_an_empty_string_collides_with_the_string_fill() -> None:
+    # H5Col's recommended fill for a string column is the empty string, so a
+    # row genuinely holding "" cannot be told from a missing one.
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        specs_from_arrow(_field_table("s", pa.string(), ["a", ""]))
+
+
+def test_the_float_fill_collision_is_caught() -> None:
+    from h5col import recommended_fill
+
+    collides = float(recommended_fill(np.dtype("float64")))
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        specs_from_arrow(_field_table("v", pa.float64(), [1.0, collides]))
+
+
+def test_a_nan_in_the_data_does_not_collide_with_the_default_float_fill() -> None:
+    # The recommended float fill is the netCDF value, not NaN, so NaN is
+    # ordinary data here.
+    spec = _one(_field_table("v", pa.float64(), [1.0, float("nan"), None]))
+    assert not np.isnan(spec.fill_value)
+
+
+def test_a_supplied_fill_is_checked_too(h5file: h5py.File) -> None:
+    # Overriding the fill does not opt out of the guard; it just moves the
+    # choice to the caller.
+    specs = specs_from_arrow(_field_table("v", pa.int32(), [7, 1, None]))
+    specs[0].fill_value = 7
+    table = _field_table("v", pa.int32(), [7, 1, None])
+    from h5col.arrow import _fill_for
+
+    with pytest.raises(SchemaError, match="supplied fill value"):
+        _fill_for(specs[0], table.schema.field("v"), table.column("v"))
+
+
+def test_a_boolean_with_nulls_is_refused() -> None:
+    # H5Col forbids a fill value on boolean columns, so a null has nowhere to
+    # be stored — and coercing it to False would invent data.
+    with pytest.raises(SchemaError, match="nowhere to be stored"):
+        specs_from_arrow(_field_table("flag", pa.bool_(), [True, None]))
+
+
+def test_a_boolean_without_nulls_declares_no_fill() -> None:
+    spec = _one(_field_table("flag", pa.bool_(), [True, False]))
+    assert spec.fill_value is None
+
+
+def test_a_categorical_needs_no_fill_check() -> None:
+    # The fill code is chosen outside [0, ncategories), so it cannot collide
+    # with a code standing for a label.
+    arr = pa.DictionaryArray.from_arrays(
+        pa.array([0, 1], type=pa.int8()), pa.array(["a", "b"])
+    )
+    spec = _one(pa.table({"k": arr}))
+    assert spec.fill_value is None
+
+
+def test_an_all_null_column_still_gets_a_fill() -> None:
+    # pyarrow's any() answers null rather than false on an all-null column;
+    # reading that as "collision" would refuse a perfectly importable column.
+    spec = _one(_field_table("v", pa.int32(), [None, None]))
+    assert spec.fill_value is not None
+
+
+def test_an_empty_column_still_gets_a_fill() -> None:
+    spec = _one(_field_table("v", pa.int32(), []))
+    assert spec.fill_value is not None
+
+
+def test_a_fill_inside_a_declared_valid_range_is_refused() -> None:
+    from h5col.exceptions import FillValueError
+
+    # The recommended int8 fill is -127, so a range that contains it leaves no
+    # room for the fill to mean "missing".
+    table = _field_table(
+        "v",
+        pa.int8(),
+        [1, None],
+        metadata={"h5col.valid_min": "-128", "h5col.valid_max": "0"},
+    )
+    with pytest.raises(FillValueError):
+        specs_from_arrow(table)
+
+
+def test_imported_specs_with_fills_build_a_working_table(h5file: h5py.File) -> None:
+    tbl = pa.table(
+        {
+            "v": pa.array([1.5, None, 3.5]),
+            "s": pa.array(["ab", None, "cd"]),
+            "flag": pa.array([True, False, True]),
+        }
+    )
+    table = Table.create(h5file.create_group("t"), specs_from_arrow(tbl))
+    # The columns that can be missing declare a fill; the boolean does not.
+    assert table["v"].fill_value is not None
+    assert table["s"].fill_value is not None
+    assert table["flag"].fill_value is None

@@ -39,6 +39,7 @@ from ._hdf5 import read_str_attr, row_positions
 from .booleans import bool_dtype, decode_bool, is_bool_dtype
 from .categorical import choose_code_dtype
 from .exceptions import ConformanceError, SchemaError
+from .missing import recommended_fill, validate_fill_outside_range
 from .reserved import (
     ATTR_CLASS,
     ATTR_DESCRIPTION,
@@ -712,13 +713,20 @@ def specs_from_arrow(table: Any) -> list[Any]:
     Nothing is read from or written to a file here.
 
     Arrow's model is wider than H5Col's, so a type with no exact H5Col
-    equivalent is refused by name rather than approximated — timestamps, dates,
+    equivalent is refused by name rather than approximated: timestamps, dates,
     times, durations, decimals, structs, maps, unions, opaque binary and
-    fixed-size lists among them.
+    fixed-size lists.
 
     Field metadata under ``h5col.`` becomes the column's own annotations, the
     same keys :func:`column_metadata` writes. Any other metadata is carried
     across as a producer attribute, unless its name is one H5Col reserves.
+
+    Arrow marks a missing value with a null; H5Col marks one with a value drawn
+    from the column's own domain. Each column therefore gets a fill value, the
+    recommended one for its datatype unless a supplied spec chooses otherwise —
+    and a fill that already occurs in the data is refused, because those rows
+    would read as missing. A boolean column with nulls is refused outright:
+    H5Col forbids a fill there, so the nulls have nowhere to go.
 
     Parameters
     ----------
@@ -729,8 +737,12 @@ def specs_from_arrow(table: Any) -> list[Any]:
     ------
     SchemaError
         If two fields share a name (HDF5 links are unique), if a column's type
-        has no H5Col equivalent, or if a ``h5col.`` metadata key is not one this
-        importer understands.
+        has no H5Col equivalent, if a ``h5col.`` metadata key is not one this
+        importer understands, if a boolean column holds nulls, or if a column's
+        fill value occurs in its data.
+    FillValueError
+        If a column's fill value falls inside a valid range its metadata
+        declares.
     ReservedNameError
         If a column name, or a producer metadata key, is a name H5Col reserves.
     """
@@ -745,5 +757,80 @@ def specs_from_arrow(table: Any) -> list[Any]:
     specs = []
     for field in table.schema:
         validate_column_name(field.name)
-        specs.append(_spec_from_field(field, table.column(field.name)))
+        column = table.column(field.name)
+        spec = _spec_from_field(field, column)
+        if isinstance(spec, ColumnSpec):
+            spec.fill_value = _fill_for(spec, field, column)
+        specs.append(spec)
     return specs
+
+
+def _fill_scalar(pa: Any, fill: Any, arrow_type: Any) -> Any:
+    """The chosen H5Col fill value as an Arrow scalar of the column's type."""
+    if isinstance(fill, bytes | bytearray):
+        # A fixed-length string column's fill is stored as bytes; the Arrow
+        # column holds text.
+        return pa.scalar(bytes(fill).decode("utf-8"), arrow_type)
+    value = fill.item() if hasattr(fill, "item") else fill
+    return pa.scalar(value, arrow_type)
+
+
+def _fill_occurs_in_data(column: Any, fill: Any) -> bool:
+    """True if *fill* appears as a real value in *column*.
+
+    A fill value is how H5Col spells "this row is missing", so a genuine value
+    equal to it becomes unreadable: :meth:`~h5col.Column.is_missing`, the query
+    layer and the Arrow export would all agree the row is absent, on a file that
+    passes ``validate(deep=True)``.
+    """
+    pa = require_pyarrow()
+    # Importing the submodule registers it on the package; reaching it through
+    # `pa` then keeps its dynamically generated functions out of the type
+    # checker's way, which cannot see them.
+    import pyarrow.compute  # noqa: F401
+
+    compute = pa.compute
+    if fill is None:
+        return False
+    if isinstance(fill, float | np.floating) and np.isnan(fill):
+        found = compute.any(compute.is_nan(column))
+    else:
+        found = compute.any(compute.equal(column, _fill_scalar(pa, fill, column.type)))
+    # An all-null or empty column answers null rather than false.
+    return found.as_py() is True
+
+
+def _fill_for(spec: Any, field: Any, column: Any) -> Any:
+    """The fill value to import *column* with, or None when it declares none.
+
+    Raises rather than choosing something unsafe. There is no correct fill for a
+    column that already contains the one H5Col recommends, and none at all for a
+    boolean, which the convention forbids from declaring one.
+    """
+    if spec.is_boolean:
+        if column.null_count:
+            raise SchemaError(
+                f"column {field.name!r}: H5Col boolean columns cannot declare a "
+                f"fill value, so this column's {column.null_count} null "
+                f"value(s) have nowhere to be stored; drop the nulls or import "
+                f"the column as an integer"
+            )
+        return None
+    if spec.is_categorical:
+        # The fill code is chosen outside [0, ncategories) by construction, so
+        # it cannot collide with a code that stands for a label.
+        return None
+
+    fill = spec.fill_value
+    chosen_by_caller = fill is not None
+    if not chosen_by_caller:
+        fill = recommended_fill(spec.resolved_dtype())
+    if _fill_occurs_in_data(column, fill):
+        source = "supplied" if chosen_by_caller else "recommended"
+        raise SchemaError(
+            f"column {field.name!r}: the {source} fill value {fill!r} occurs in "
+            f"the data, so those rows would read as missing; pass a ColumnSpec "
+            f"with a fill_value the column does not contain"
+        )
+    validate_fill_outside_range(fill, spec.valid_min, spec.valid_max)
+    return fill
