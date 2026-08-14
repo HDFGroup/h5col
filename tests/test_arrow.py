@@ -20,7 +20,7 @@ from h5col import (
 pa = pytest.importorskip("pyarrow", reason="the arrow extra is not installed")
 
 from h5col.arrow import _offsets_buffer, string_array  # noqa: E402
-from h5col.exceptions import ConformanceError  # noqa: E402
+from h5col.exceptions import ConformanceError, SchemaError  # noqa: E402
 
 
 def _table(h5file: h5py.File) -> Table:
@@ -517,3 +517,68 @@ def test_select_rejects_a_bad_row_spec(h5file: h5py.File) -> None:
         _select(pa, whole, [t.nrows], t.nrows, "xs")
     with pytest.raises(IndexError, match="one entry per row"):
         _select(pa, whole, np.zeros(99, dtype=bool), t.nrows, "xs")
+
+
+# --------------------------------------------------------------------------- #
+# Datatypes H5Col stores but Arrow has no type for
+# --------------------------------------------------------------------------- #
+def _opaque_column(h5file: h5py.File, where: str = "t") -> Table:
+    """An opaque column, which the convention permits and h5col writes."""
+    t = Table.create(
+        h5file.create_group(where),
+        [
+            ColumnSpec(
+                name="digest", dtype=np.dtype("V8"), fill_value=np.void(b"\xff" * 8)
+            )
+        ],
+    )
+    t.append({"digest": np.array([b"\x01" * 8, b"\x02" * 8], dtype="V8")})
+    return t
+
+
+def test_an_opaque_column_is_refused_by_name(h5file: h5py.File) -> None:
+    # Left to pyarrow this fails with "Unsupported numpy type 20", which says
+    # nothing about the column or about what to do instead.
+    t = _opaque_column(h5file)
+    t.validate(deep=True)  # the table itself is perfectly conformant
+    with pytest.raises(SchemaError, match="opaque, compound, or array datatype"):
+        t.to_arrow()
+    with pytest.raises(SchemaError, match="digest"):
+        t["digest"].to_arrow()
+
+
+def test_a_complex_column_is_refused_by_name(h5file: h5py.File) -> None:
+    t = Table.create(
+        h5file.create_group("t"),
+        [ColumnSpec(name="z", dtype="c16", fill_value=complex(-9e36, 0))],
+    )
+    t.append({"z": np.array([1 + 2j, 3 + 4j])})
+    with pytest.raises(SchemaError, match="complex datatype"):
+        t.to_arrow()
+
+
+def test_an_opaque_list_leaf_is_refused_by_name(h5file: h5py.File) -> None:
+    # The leaf path builds its own arrays, so it needs its own guard.
+    t = Table.create(
+        h5file.create_group("t"),
+        [
+            ListColumnSpec(
+                name="digests",
+                values=LeafValuesSpec(dtype="V8", fill_value=np.void(b"\xff" * 8)),
+            )
+        ],
+    )
+    t.append({"digests": [[np.void(b"\x01" * 8)], []]})
+    with pytest.raises(SchemaError, match="opaque, compound, or array datatype"):
+        t.to_arrow()
+
+
+def test_a_variable_length_string_column_still_exports(h5file: h5py.File) -> None:
+    # The guard covers the two dtype kinds that actually fail. A vlen string
+    # column converts (as Arrow binary), so it must not be swept up as well.
+    t = Table.create(
+        h5file.create_group("t"),
+        [ColumnSpec(name="note", dtype=h5py.string_dtype())],
+    )
+    t.append({"note": np.array(["ab", "cd"], dtype=object)})
+    assert t.to_arrow().column("note").to_pylist() == [b"ab", b"cd"]

@@ -44,6 +44,7 @@ from .reserved import (
     ATTR_CLASS,
     ATTR_DESCRIPTION,
     ATTR_UNITS,
+    ATTR_UNITS_VOCABULARY,
     ATTR_VALID_MAX,
     ATTR_VALID_MIN,
     CLASS_LIST_COLUMN,
@@ -190,7 +191,53 @@ def _categorical_array(col: Column, raw: npt.NDArray[Any], mask: Any) -> Any:
     # A fill code is outside [0, ncats) and would fail Arrow's index check, so
     # park masked rows on index 0 and let the validity bitmap hide them.
     codes = np.where(mask, 0, raw).astype(raw.dtype, copy=False)
-    return pa.DictionaryArray.from_arrays(pa.array(codes, mask=mask), pa.array(labels))
+    return pa.DictionaryArray.from_arrays(
+        pa.array(codes, mask=mask),
+        pa.array(labels),
+        # Arrow carries this on the type itself, so the exported column says
+        # whether its categories are ordered without anyone reading metadata.
+        ordered=bool(col.ordered),
+    )
+
+
+#: NumPy dtype kinds the Arrow export has no type to offer, and what to call
+#: them in the error. H5Col permits these columns — the convention lets a column
+#: dataset carry any HDF5 datatype — so the refusal is about this conversion,
+#: not about the file.
+_UNCONVERTIBLE_KINDS = {
+    "V": "an opaque, compound, or array datatype",
+    "c": "a complex datatype",
+}
+
+
+def _refuse_dtype(name: str, dtype: Any) -> None:
+    """Raise for a stored datatype the Arrow export cannot represent.
+
+    Without this the conversion reaches ``pyarrow`` and fails there, with a
+    message naming a NumPy type number and nothing else — on a table H5Col
+    wrote and validates.
+
+    Parameters
+    ----------
+    name:
+        The column or dataset the datatype belongs to, for the message.
+    dtype:
+        The stored datatype. Anything outside :data:`_UNCONVERTIBLE_KINDS`
+        passes through untouched.
+
+    Raises
+    ------
+    SchemaError
+        If the datatype has no Arrow equivalent this package can build.
+    """
+    why = _UNCONVERTIBLE_KINDS.get(dtype.kind)
+    if why is None:
+        return
+    raise SchemaError(
+        f"column {name!r}: {dtype} is {why}, which the Arrow export has no type "
+        f"for; H5Col stores the column, so read it with `read()`, or reach the "
+        f"raw values through the column's `dataset`"
+    )
 
 
 def column_array(col: Column, rows: Any = None) -> Any:
@@ -216,6 +263,7 @@ def column_array(col: Column, rows: Any = None) -> Any:
         return string_array(raw, nbytes, mask)
     if col.is_boolean:
         return pa.array(decode_bool(raw), mask=mask)
+    _refuse_dtype(col.name, raw.dtype)
     return pa.array(_native(raw), mask=mask)
 
 
@@ -235,6 +283,7 @@ def column_metadata(col: Column) -> dict[str, str]:
     meta: dict[str, str] = {}
     for key, value in (
         (ATTR_UNITS, col.units),
+        (ATTR_UNITS_VOCABULARY, col.units_vocabulary),
         (ATTR_DESCRIPTION, col.description),
         (ATTR_VALID_MIN, col.valid_min),
         (ATTR_VALID_MAX, col.valid_max),
@@ -258,7 +307,7 @@ def list_column_metadata(col: Any) -> dict[str, str]:
     meta: dict[str, str] = {}
     for key, value in (
         (ATTR_UNITS, col.units),
-        ("units_vocabulary", col.units_vocabulary),
+        (ATTR_UNITS_VOCABULARY, col.units_vocabulary),
         (ATTR_DESCRIPTION, col.description),
     ):
         if value is not None:
@@ -446,6 +495,7 @@ def _leaf_array(ds: Any, count: int) -> Any:
         return string_array(raw, FixedString.from_dtype(ds.dtype).nbytes, mask)
     if is_bool_dtype(ds.dtype):
         return pa.array(decode_bool(raw), mask=mask)
+    _refuse_dtype(ds.name, raw.dtype)
     return pa.array(_native(raw), mask=mask)
 
 
@@ -577,10 +627,14 @@ _UNSUPPORTED = {
     "map": "H5Col has no map type",
     "union": "H5Col has no union type",
     "null": "a column of only nulls has no datatype to store",
-    "binary": "H5Col stores text, not opaque bytes; a fixed-length string column "
-    "needs a known encoding",
-    "fixed_size_list": "H5Col list columns are variable-length; convert to a "
-    "list type first",
+    "binary": "H5Col column datatypes are fixed-width, and variable-length "
+    "bytes give nothing to size a column to; a fixed_size_binary column has a "
+    "width, though this package does not map one yet",
+    "fixed_size_binary": "these belong in an opaque column, which the "
+    "convention permits and this package does not write yet",
+    "fixed_size_list": "this package writes no array-typed columns, which is "
+    "where a fixed count per row belongs; convert to a list type first, which "
+    "stores the same values but fixes no row length",
 }
 
 #: Metadata keys under ``h5col.`` that this importer understands.
@@ -602,11 +656,11 @@ def _refuse(field: Any) -> None:
     for family, why in _UNSUPPORTED.items():
         if name.startswith(family):
             raise SchemaError(
-                f"column {field.name!r}: Arrow type {name} cannot be stored in "
-                f"H5Col — {why}"
+                f"column {field.name!r}: Arrow type {name} cannot be imported — {why}"
             )
     raise SchemaError(
-        f"column {field.name!r}: Arrow type {name} is not supported by this importer"
+        f"column {field.name!r}: Arrow type {name} cannot be imported — this "
+        f"importer has no mapping for it"
     )
 
 
@@ -772,6 +826,31 @@ def _values_spec_from_type(field_name: str, arrow_type: Any, values: Any) -> Any
     )
 
 
+def _code_dtype(index_type: Any, ncategories: int) -> np.dtype:
+    """The integer dtype to store a categorical column's codes in.
+
+    Arrow's own index type is kept whenever H5Col can store it, so a column
+    that arrived with ``int32`` codes keeps them instead of being narrowed
+    behind the caller's back — exporting the imported table would otherwise
+    hand back a different schema than the one that went in.
+
+    Parameters
+    ----------
+    index_type:
+        The Arrow dictionary's index type. Arrow keeps these signed, which is
+        what leaves room for the ``-1`` fill code.
+    ncategories:
+        How many labels the column has, used to pick a type when Arrow's own
+        cannot be kept.
+    """
+    key = str(index_type)
+    if key in _PRIMITIVE_DTYPES:
+        dtype = np.dtype(_PRIMITIVE_DTYPES[key])
+        if dtype.kind == "i" and ncategories <= np.iinfo(dtype).max:
+            return dtype
+    return choose_code_dtype(ncategories)
+
+
 def _spec_from_field(field: Any, column: Any) -> Any:
     """One :class:`ColumnSpec` or :class:`ListColumnSpec` for one Arrow field.
 
@@ -800,12 +879,18 @@ def _spec_from_field(field: Any, column: Any) -> Any:
     if pa.types.is_dictionary(ty):
         unified = column.unify_dictionaries()
         labels = unified.chunk(0).dictionary.to_pylist() if unified.num_chunks else []
-        codes = choose_code_dtype(len(labels))
+        codes = _code_dtype(ty.index_type, len(labels))
         annotations = _annotations(field, codes, allowed=_COMMON_METADATA | {"ordered"})
-        # Arrow's own flag is authoritative; h5col.ordered is the fallback for a
-        # table written before the export set the Arrow type's flag.
-        annotations.setdefault("ordered", ty.ordered)
-        return ColumnSpec(name=field.name, categories=labels, **annotations)
+        # h5col.ordered wins where it is present, being this package's own key;
+        # Arrow's type flag covers every table written by anything else. Only a
+        # True flag is adopted: Arrow's unordered is also its default, so
+        # treating it as a stated `ordered=False` would invent an attribute the
+        # column never had.
+        if ty.ordered:
+            annotations.setdefault("ordered", True)
+        return ColumnSpec(
+            name=field.name, dtype=codes, categories=labels, **annotations
+        )
 
     if pa.types.is_boolean(ty):
         return ColumnSpec(
@@ -862,6 +947,8 @@ def specs_from_arrow(table: Any) -> list[Any]:
     and a fill that already occurs in the data is refused, because those rows
     would read as missing. A boolean column with nulls is refused outright:
     H5Col forbids a fill there, so the nulls have nowhere to go.
+
+    .. versionadded:: 0.4.0
 
     Parameters
     ----------

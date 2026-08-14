@@ -163,7 +163,7 @@ def test_list_of_strings_uses_string_values() -> None:
 )
 def test_unrepresentable_types_are_refused_by_name(label: str, arrow_type: Any) -> None:
     table = pa.table({"c": pa.array([], type=arrow_type)})
-    with pytest.raises(SchemaError, match="cannot be stored in H5Col"):
+    with pytest.raises(SchemaError, match="cannot be imported"):
         specs_from_arrow(table)
 
 

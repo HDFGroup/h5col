@@ -37,6 +37,14 @@ Tables and columns:
    h5col.ListColumn
 ```
 
+Arrow interchange:
+
+```{eval-rst}
+.. autosummary::
+
+   h5col.specs_from_arrow
+```
+
 Write-side specifications:
 
 ```{eval-rst}

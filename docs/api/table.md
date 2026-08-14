@@ -22,3 +22,17 @@ methods: `table["name"]` hands out a column, and `column[17:98]` reads rows.
    :members:
    :special-members: __getitem__, __len__, __iter__
 ```
+
+## Arrow interchange
+
+{meth}`Table.to_arrow <h5col.Table.to_arrow>` exports a table and
+{meth}`Table.from_arrow <h5col.Table.from_arrow>` imports one, deciding each
+column's spec for itself. The function below returns those specs without
+writing anything, so they can be looked at and adjusted first. It is also the
+only way to set chunking and filters, which have no Arrow equivalent to be
+inferred from. The [guide chapter](../guide/from-arrow.md) covers the whole
+picture.
+
+```{eval-rst}
+.. autofunction:: h5col.specs_from_arrow
+```

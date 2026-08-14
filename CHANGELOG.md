@@ -6,6 +6,67 @@ to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Arrow tables can be imported.** `Table.from_arrow(group, tbl)` writes a
+  `pyarrow.Table` as a H5Col table, the inverse of the existing `to_arrow`
+  export. Rows go in batch by batch, so importing a large table costs about
+  one batch of memory rather than the whole of it.
+
+  Arrow's type system is wider than H5Col's, and the difference is not
+  approximated: a timestamp, date, time, duration, decimal, struct, map,
+  union, opaque binary or fixed-size-list column is refused by name, with the
+  alternative spelled out in the message.
+
+  The harder mismatch is that Arrow marks a missing value with a null while
+  H5Col marks one with a value from the column's own domain. Every column that
+  can hold a null therefore gets a fill value, and a fill that already occurs
+  in the data is refused — that combination would otherwise produce a
+  conformant file whose rows read as missing when they are not. The check runs
+  at every level of a list column, since a null element is stored the same way
+  a null row is. A boolean column holding nulls is refused outright: the
+  convention gives booleans no fill value to store them in.
+
+  `specs_from_arrow(tbl)` returns the column specs the import would use, so
+  they can be inspected and adjusted before anything is written. Chunking and
+  filters have no Arrow equivalent and cannot be inferred at all, so this is
+  the only way to set them. String widths and category label sets are read
+  from the data, which is worth a look on a table you did not write.
+
+  Field metadata under `h5col.` becomes the column's own annotations. Any
+  other metadata is carried across as an ordinary HDF5 attribute, unless its
+  name is one H5Col reserves or writes itself, which raises
+  `ReservedNameError`.
+
+  Needs the optional `pyarrow` dependency (`pip install h5col[arrow]`). A new
+  guide chapter, [Writing an Arrow table into
+  H5Col](https://hdfgroup.github.io/h5col/guide/from-arrow.html), covers all
+  of this in prose.
+
+- `Column.units_vocabulary` reads the column's `units_vocabulary` attribute,
+  which `ColumnSpec` could already write but nothing could read back.
+  `ListColumn` has had the property since 0.1.0.
+
+### Fixed
+
+- The Arrow export left the `ordered` flag of a categorical column's Arrow
+  type at 0 even for an ordered categorical, recording the fact only in the
+  `h5col.ordered` metadata key. A consumer reading the type rather than the
+  metadata — which is where Arrow puts this — saw an unordered dictionary. The
+  exported type now carries the flag, and `h5col.ordered` stays as the key
+  that survives a Parquet round trip.
+- The Arrow export dropped a scalar column's `units_vocabulary`. Only `units`,
+  `description` and the valid range travelled, so the vocabulary the units were
+  drawn from was lost on the way out. List columns were unaffected.
+- `to_arrow` crashed on a column whose datatype Arrow has no type for, with
+  `ArrowNotImplementedError: Unsupported numpy type 20` raised from inside
+  pyarrow — on a table `h5col` itself wrote and `validate(deep=True)` passes.
+  The convention lets a column dataset carry any HDF5 datatype, so opaque,
+  compound, array and complex columns are all legitimate; they are now refused
+  by name, saying which column it is and that the values are still readable
+  through `read()` or the column's `dataset`. The same guard covers a list
+  column's leaf values.
+
 ## [0.3.0] - 2026-08-11
 
 ### Added

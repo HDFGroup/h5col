@@ -289,10 +289,10 @@ The missing temperature is `null`, not `-999`. The `kind` column is still a
 dictionary of two labels with one code per row. The `samples` column keeps its
 rows and its missing row.
 
-Each column's `units`, `description` and valid-range attributes travel along as
-Arrow field metadata, under names beginning `h5col.`, and they survive being
-written to Parquet and read back. So a table exported this way does not lose
-the descriptions that made it understandable.
+Each column's `units`, `units_vocabulary`, `description` and valid-range
+attributes travel along as Arrow field metadata, under names beginning with
+`h5col.`, and they survive being written to Parquet and read back. So a table
+exported this way does not lose the descriptions that made it understandable.
 
 The most of the tabular ecosystem is just one call away from an Arrow table:
 `.to_pandas()`, Polars, DuckDB, `pyarrow.parquet.write_table`. Arrow is also the
@@ -301,6 +301,9 @@ the layout Arrow uses. Where reading a list column into Python lists has to
 build every row as an object, the Arrow export mostly hands the same blocks of
 memory straight over. On a column of two hundred thousand rows that is roughly
 twenty to thirty times faster.
+
+The trip runs both ways: {meth}`Table.from_arrow <h5col.Table.from_arrow>`
+[writes a `pyarrow.Table` as an H5Col table](from-arrow.md).
 
 `pyarrow` is not required to use `h5col`. Install it alongside if you want this
 data export feature:

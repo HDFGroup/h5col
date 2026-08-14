@@ -15,6 +15,7 @@ from .reserved import (
     ATTR_CATEGORIES,
     ATTR_DESCRIPTION,
     ATTR_UNITS,
+    ATTR_UNITS_VOCABULARY,
     ATTR_VALID_MAX,
     ATTR_VALID_MIN,
 )
@@ -208,6 +209,18 @@ class Column:
     def units(self) -> str | None:
         """The column's ``units`` attribute, or None when unset."""
         return read_str_attr(self._ds, ATTR_UNITS)
+
+    @property
+    def units_vocabulary(self) -> str | None:
+        """The column's ``units_vocabulary`` attribute, or None when unset.
+
+        Names the vocabulary :attr:`units` is drawn from — UDUNITS-2, say — so
+        a reader can tell which spelling of a unit was meant. A table declares
+        one for all its columns; this is the per-column override.
+
+        .. versionadded:: 0.4.0
+        """
+        return read_str_attr(self._ds, ATTR_UNITS_VOCABULARY)
 
     @property
     def description(self) -> str | None:

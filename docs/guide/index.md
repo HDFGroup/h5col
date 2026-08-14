@@ -12,6 +12,7 @@ column-types
 missing-values
 list-columns
 reading-into-python
+from-arrow
 filters
 indexes
 ```

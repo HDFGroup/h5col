@@ -488,6 +488,8 @@ class Table:
 
         Needs the optional ``pyarrow`` dependency (``pip install h5col[arrow]``).
 
+        .. versionadded:: 0.4.0
+
         Parameters
         ----------
         group:
