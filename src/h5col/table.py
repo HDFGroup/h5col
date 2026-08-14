@@ -454,6 +454,83 @@ class Table:
         table.append(arrays)
         return table
 
+    @classmethod
+    def from_arrow(
+        cls,
+        group: Any,
+        table: Any,
+        *,
+        specs: Sequence[ColumnSpec | ListColumnSpec] | None = None,
+        **table_kwargs: Any,
+    ) -> Table:
+        """Create a table from a :class:`pyarrow.Table` and write its rows.
+
+        Arrow's model is wider than H5Col's, so anything without an exact
+        equivalent is refused rather than approximated, see
+        :func:`~h5col.specs_from_arrow`, which decides the mapping and which you
+        can call first to inspect or adjust it::
+
+            specs = h5col.specs_from_arrow(tbl)
+            specs[2].chunks = 8192
+            Table.from_arrow(group, tbl, specs=specs)
+
+        Rows are written batch by batch rather than all at once, so importing a
+        large table costs about one batch of memory rather than the whole of it.
+
+        Two chunks of one dictionary column may carry different dictionaries,
+        in which case the same code stands for two different labels. The codes
+        are never read directly for that reason — the labels are, against the
+        unified category set :func:`~h5col.specs_from_arrow` derives.
+
+        The fill-value checks run whichever way the specs arrived: a fill that
+        already occurs in a column would leave those rows reading as missing, so
+        supplying specs cannot skip it.
+
+        Needs the optional ``pyarrow`` dependency (``pip install h5col[arrow]``).
+
+        Parameters
+        ----------
+        group:
+            An h5py group to write the table into, as for :meth:`create`.
+        table:
+            The :class:`pyarrow.Table` to import.
+        specs:
+            A complete list of column specs naming exactly the table's columns.
+            None infers them. Chunking and filters have no Arrow equivalent, so
+            this is the only way to set them.
+        table_kwargs:
+            Passed through to :meth:`create`, so ``title``, ``index_columns``
+            and the rest are available here too.
+
+        Raises
+        ------
+        SchemaError
+            If a column's type has no H5Col equivalent, if a fill value occurs
+            in its column's data, if a boolean column holds nulls, or if
+            *specs* does not name exactly the table's columns.
+        ReservedNameError
+            If a column name, or a producer metadata key, is one H5Col reserves.
+        """
+        prepared = arrow.prepared_specs(table, specs)
+        unsupported = [s.name for s in prepared if isinstance(s, ListColumnSpec)]
+        if unsupported:
+            raise SchemaError(
+                f"importing list columns is not implemented yet: {unsupported}"
+            )
+
+        out = cls.create(group, prepared, **table_kwargs)
+        by_name = {s.name: s for s in prepared}
+        for batch in table.to_batches():
+            if not batch.num_rows:
+                continue
+            out.append(
+                {
+                    name: arrow.append_values(by_name[name], batch.column(name))
+                    for name in batch.schema.names
+                }
+            )
+        return out
+
     # -- introspection ------------------------------------------------------ #
     @property
     def group(self) -> Any:

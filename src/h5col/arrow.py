@@ -834,3 +834,87 @@ def _fill_for(spec: Any, field: Any, column: Any) -> Any:
         )
     validate_fill_outside_range(fill, spec.valid_min, spec.valid_max)
     return fill
+
+
+def prepared_specs(table: Any, specs: Any = None) -> list[Any]:
+    """Specs for importing *table*, with every fill value checked against data.
+
+    The fill checks are not skippable by supplying specs: choosing a value that
+    already occurs in the column is the one importing mistake that produces a
+    conformant file with unreadable rows, so it is verified whatever the specs
+    came from. Supplied specs are copied rather than mutated.
+
+    Parameters
+    ----------
+    table:
+        The :class:`pyarrow.Table` being imported.
+    specs:
+        A complete list of column specs, as from :func:`specs_from_arrow`, or
+        None to infer them.
+
+    Raises
+    ------
+    SchemaError
+        If *specs* does not name exactly the table's columns.
+    """
+    inferred = (
+        specs_from_arrow(table) if specs is None else [s.model_copy() for s in specs]
+    )
+    by_name = {s.name: s for s in inferred}
+    wanted = list(table.schema.names)
+    if sorted(by_name) != sorted(wanted):
+        missing_specs = sorted(set(wanted) - set(by_name))
+        extra = sorted(set(by_name) - set(wanted))
+        raise SchemaError(
+            f"specs must name exactly the table's columns; missing "
+            f"{missing_specs}, unexpected {extra}"
+        )
+    out = []
+    for field in table.schema:
+        spec = by_name[field.name]
+        if isinstance(spec, ColumnSpec):
+            spec.fill_value = _fill_for(spec, field, table.column(field.name))
+        out.append(spec)
+    return out
+
+
+def append_values(spec: Any, column: Any) -> Any:
+    """One record-batch column in a form :meth:`~h5col.Table.append` accepts.
+
+    Numeric columns have their nulls replaced by the column's fill value before
+    NumPy sees them: ``to_numpy`` on a nullable integer column upcasts to
+    ``float64`` and turns the nulls into NaN, which would change the datatype of
+    every value in the column, not only the missing ones.
+
+    Parameters
+    ----------
+    spec:
+        The column's spec, which carries the fill value and the datatype.
+    column:
+        The batch's column, as a :class:`pyarrow.Array`.
+    """
+    pa = require_pyarrow()
+    if spec.is_categorical or FixedString.is_fixed_string(spec.resolved_dtype()):
+        # Labels and text go across as Python objects; `append` maps None to the
+        # column's fill for both.
+        return column.to_pylist()
+    if spec.is_boolean:
+        return column.to_numpy(zero_copy_only=False)
+    filled = column
+    if column.null_count:
+        # `pyarrow.compute` is not an attribute of the package until something
+        # imports the submodule. Every route here has already been through
+        # _fill_occurs_in_data, which imports it, but relying on that would
+        # leave this function broken by a change somewhere else and no test
+        # able to see it — the submodule stays registered for the rest of the
+        # process once any one caller has imported it. Reaching it through
+        # `pa` afterwards keeps its dynamically generated functions out of the
+        # type checker's way, which cannot see them.
+        import pyarrow.compute  # noqa: F401
+
+        filled = pa.compute.fill_null(
+            column, _fill_scalar(pa, spec.fill_value, column.type)
+        )
+    return np.asarray(filled.to_numpy(zero_copy_only=False)).astype(
+        spec.resolved_dtype(), copy=False
+    )
