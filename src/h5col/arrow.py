@@ -98,6 +98,11 @@ def _native(raw: npt.NDArray[Any]) -> npt.NDArray[Any]:
     big-endian datasets are ordinary in this corner of the world — NetCDF-4,
     Fortran and IDL producers all write them. H5Col reads them fine, so the
     Arrow export must too. A no-op on native data.
+
+    Parameters
+    ----------
+    raw:
+        A block just read from a dataset, in whatever byte order the file uses.
     """
     # isnative covers both cases that need nothing done: already native, and
     # dtypes with no byte order to speak of (S, bool, enum).
@@ -112,6 +117,11 @@ def _validity(mask: npt.NDArray[np.bool_]) -> Any:
     H5Col carries presence as one byte per row; Arrow wants one *bit*, set when
     the row is valid. Returns None when nothing is missing, which is how Arrow
     spells "no nulls" and costs it no buffer at all.
+
+    Parameters
+    ----------
+    mask:
+        True where the row is missing, one entry per row.
     """
     pa = require_pyarrow()
     if not mask.any():
@@ -165,6 +175,15 @@ def _categorical_array(col: Column, raw: npt.NDArray[Any], mask: Any) -> Any:
     H5Col already stores a categorical as codes plus a separate label dataset,
     which is exactly Arrow's dictionary layout — so the codes go across as they
     are and only the (small) label set is materialized.
+
+    Parameters
+    ----------
+    col:
+        The categorical column, whose table group holds the label dataset.
+    raw:
+        The stored codes, one per row.
+    mask:
+        True where the row is missing.
     """
     pa = require_pyarrow()
     labels = categorical.load_category_labels(col._table.group, col.dataset)
@@ -254,6 +273,21 @@ def _select(pa: Any, array: Any, rows: Any, nrows: int, name: str) -> Any:
     OFFSETS cannot be shared as a buffer. This keeps the row spec meaning the
     same thing here as it does for a scalar column, where the selection is
     applied while reading instead.
+
+    Parameters
+    ----------
+    pa:
+        The ``pyarrow`` module, already imported by the caller.
+    array:
+        The whole column, as an Arrow array.
+    rows:
+        Which rows to keep, as a slice, a sequence of positions, or a boolean
+        mask.
+    nrows:
+        The table's row count, which negative and open-ended slices resolve
+        against.
+    name:
+        The column's name, used only to make an error message specific.
     """
     if isinstance(rows, slice):
         start, stop, step = rows.indices(nrows)
@@ -332,6 +366,13 @@ def _offsets_buffer(ds: Any, count: int) -> Any:
     and then aborts the process when something reads it. Checking costs a pass
     over an array we have just read.
 
+    Parameters
+    ----------
+    ds:
+        The level's ``OFFSETS`` dataset.
+    count:
+        How many entries this level holds; ``OFFSETS`` has one more than that.
+
     Raises
     ------
     ConformanceError
@@ -371,7 +412,14 @@ def _element_mask(ds: Any, raw: npt.NDArray[Any]) -> npt.NDArray[np.bool_]:
     """Missing-element mask for a leaf VALUES dataset.
 
     Gated on ``H5D_FILL_VALUE_USER_DEFINED`` exactly as a column's is, so h5py's
-    library-default fill value is never mistaken for a H5Col sentinel.
+    library-default fill value is never mistaken for a value H5Col wrote.
+
+    Parameters
+    ----------
+    ds:
+        The leaf ``VALUES`` dataset, whose fill value marks a missing element.
+    raw:
+        The block of elements just read from it.
     """
     if is_bool_dtype(ds.dtype) or ds.id.get_create_plist().fill_value_defined() != 2:
         return np.zeros(raw.shape[0], dtype=np.bool_)
@@ -383,6 +431,13 @@ def _leaf_array(ds: Any, count: int) -> Any:
 
     A leaf may be any datatype a column may be except a variable-length one, so
     this covers the fixed-length string and boolean cases as well as numerics.
+
+    Parameters
+    ----------
+    ds:
+        The leaf ``VALUES`` dataset.
+    count:
+        How many elements to convert, counted from the first.
     """
     pa = require_pyarrow()
     raw = ds[0:count]
@@ -399,6 +454,14 @@ def _string_values_array(group: Any, count: int) -> Any:
 
     H5Col's OFFSETS plus a UTF-8 CHARS buffer is precisely Arrow's string
     layout, so both buffers go across untouched.
+
+    Parameters
+    ----------
+    group:
+        A ``STRING_VALUES`` group: ``OFFSETS``, ``CHARS``, and perhaps a
+        ``MASK``.
+    count:
+        How many strings to convert, counted from the first.
     """
     pa = require_pyarrow()
     chars = group[MEMBER_CHARS]
@@ -417,14 +480,32 @@ def _string_values_array(group: Any, count: int) -> Any:
 
 
 def _mask_validity(group: Any, count: int) -> Any:
-    """The group's MASK member as an Arrow validity bitmap, or None if absent."""
+    """The group's MASK member as an Arrow validity bitmap, or None if absent.
+
+    Parameters
+    ----------
+    group:
+        A list-column level or ``STRING_VALUES`` group, which may hold a
+        ``MASK``.
+    count:
+        How many mask entries to read, counted from the first.
+    """
     if MEMBER_MASK not in group:
         return None
     return _validity(~decode_bool(group[MEMBER_MASK][0:count]))
 
 
 def _values_array(obj: Any, count: int) -> Any:
-    """Whichever of the three VALUES forms *obj* is, as an Arrow array."""
+    """Whichever of the three VALUES forms *obj* is, as an Arrow array.
+
+    Parameters
+    ----------
+    obj:
+        A level's ``VALUES`` member: a leaf dataset, a ``STRING_VALUES`` group,
+        or a nested list-column group.
+    count:
+        How many entries of it to convert, counted from the first.
+    """
     if isinstance(obj, h5py.Dataset):
         return _leaf_array(obj, count)
     cls = read_str_attr(obj, ATTR_CLASS)
@@ -509,7 +590,14 @@ _KNOWN_METADATA = frozenset(
 
 
 def _refuse(field: Any) -> None:
-    """Raise for an Arrow type H5Col cannot represent exactly."""
+    """Raise for an Arrow type H5Col cannot represent exactly.
+
+    Parameters
+    ----------
+    field:
+        The Arrow field being refused. Its type decides which explanation the
+        error carries.
+    """
     name = str(field.type)
     for family, why in _UNSUPPORTED.items():
         if name.startswith(family):
@@ -523,7 +611,13 @@ def _refuse(field: Any) -> None:
 
 
 def _decoded_metadata(field: Any) -> dict[str, str]:
-    """*field*'s metadata as ``str`` keys and values (Arrow stores bytes)."""
+    """*field*'s metadata as ``str`` keys and values (Arrow stores bytes).
+
+    Parameters
+    ----------
+    field:
+        An Arrow field. Its metadata may be None, which reads as empty.
+    """
     raw = field.metadata or {}
     return {
         (k.decode() if isinstance(k, bytes) else k): (
@@ -540,6 +634,14 @@ def _parse_bound(text: str, dtype: Any) -> Any:
     have to be read back against the datatype they belong to rather than
     guessed. ``np.dtype(None)`` is ``float64``, so a caller with no dtype in
     hand must not reach this — it would turn any bound into a float in silence.
+
+    Parameters
+    ----------
+    text:
+        The bound as it was written, which is always a string.
+    dtype:
+        The column's datatype, which the bound is read against. None is
+        refused rather than defaulted.
     """
     if dtype is None:
         raise SchemaError(f"cannot read the bound {text!r} without a datatype")
@@ -614,6 +716,13 @@ def _max_utf8_bytes(chunked: Any) -> int:
     and H5Col's are not. The column is therefore sized to its data, so a later
     append of a longer value raises rather than truncating — pass a
     :class:`~h5col.ColumnSpec` to choose a wider budget deliberately.
+
+    Parameters
+    ----------
+    chunked:
+        A string column, as a :class:`pyarrow.ChunkedArray`. Nulls contribute
+        no width; a column with no non-empty value still gets a width of one
+        byte, since HDF5 rejects a zero-length string datatype.
     """
     widest = 0
     for chunk in chunked.chunks:
@@ -623,16 +732,34 @@ def _max_utf8_bytes(chunked: Any) -> int:
     return max(1, widest)
 
 
-def _values_spec_from_type(field_name: str, arrow_type: Any, nullable: bool) -> Any:
-    """The ``VALUES`` member for one level of a list column."""
+def _values_spec_from_type(field_name: str, arrow_type: Any, values: Any) -> Any:
+    """The ``VALUES`` member for one level of a list column.
+
+    *values* is the flattened array at this level, so each level's nullability
+    comes from whether that level actually holds nulls rather than being
+    assumed — an unnecessary ``MASK`` is a dataset per level that no row needs.
+
+    Parameters
+    ----------
+    field_name:
+        The column's name, used only to make an error message specific.
+    arrow_type:
+        The Arrow type of this level's values.
+    values:
+        This level's values, flattened out of the level above. Only their
+        nulls are looked at.
+    """
     pa = require_pyarrow()
     if pa.types.is_large_string(arrow_type) or pa.types.is_string(arrow_type):
-        return StringValuesSpec(nullable=nullable)
+        # A null string element is marked by a MASK, not by a fill value, so
+        # there is no value here that could collide with the data.
+        return StringValuesSpec(nullable=bool(values.null_count))
     if pa.types.is_large_list(arrow_type) or pa.types.is_list(arrow_type):
-        inner = arrow_type.value_type
         return NestedListSpec(
-            values=_values_spec_from_type(field_name, inner, nullable),
-            nullable=nullable,
+            values=_values_spec_from_type(
+                field_name, arrow_type.value_type, values.flatten()
+            ),
+            nullable=bool(values.null_count),
         )
     key = str(arrow_type)
     if pa.types.is_boolean(arrow_type):
@@ -646,19 +773,27 @@ def _values_spec_from_type(field_name: str, arrow_type: Any, nullable: bool) -> 
 
 
 def _spec_from_field(field: Any, column: Any) -> Any:
-    """One :class:`ColumnSpec` or :class:`ListColumnSpec` for one Arrow field."""
+    """One :class:`ColumnSpec` or :class:`ListColumnSpec` for one Arrow field.
+
+    Parameters
+    ----------
+    field:
+        The Arrow field: its type decides the kind of column, its metadata the
+        annotations.
+    column:
+        The field's data, read for what the type alone does not carry — a
+        string column's widest value, a dictionary column's labels, and which
+        levels of a list column hold nulls.
+    """
     pa = require_pyarrow()
     ty = field.type
     key = str(ty)
 
     if pa.types.is_large_list(ty) or pa.types.is_list(ty):
-        # A null anywhere below the top level needs somewhere to go, and the
-        # element mask is the only place a list column has.
-        nullable = column.null_count > 0
         return ListColumnSpec(
             name=field.name,
-            values=_values_spec_from_type(field.name, ty.value_type, nullable=True),
-            nullable=nullable,
+            values=_values_spec_from_type(field.name, ty.value_type, _flatten(column)),
+            nullable=bool(column.null_count),
             **_annotations(field, None, allowed=_COMMON_METADATA),
         )
 
@@ -766,7 +901,18 @@ def specs_from_arrow(table: Any) -> list[Any]:
 
 
 def _fill_scalar(pa: Any, fill: Any, arrow_type: Any) -> Any:
-    """The chosen H5Col fill value as an Arrow scalar of the column's type."""
+    """The chosen H5Col fill value as an Arrow scalar of the column's type.
+
+    Parameters
+    ----------
+    pa:
+        The ``pyarrow`` module, already imported by the caller.
+    fill:
+        The fill value, in the form H5Col holds it.
+    arrow_type:
+        The type to build the scalar as, so it can be compared against the
+        column or substituted into it.
+    """
     if isinstance(fill, bytes | bytearray):
         # A fixed-length string column's fill is stored as bytes; the Arrow
         # column holds text.
@@ -782,6 +928,16 @@ def _fill_occurs_in_data(column: Any, fill: Any) -> bool:
     equal to it becomes unreadable: :meth:`~h5col.Column.is_missing`, the query
     layer and the Arrow export would all agree the row is absent, on a file that
     passes ``validate(deep=True)``.
+
+    Parameters
+    ----------
+    column:
+        The data to search, as a :class:`pyarrow.ChunkedArray` or
+        :class:`pyarrow.Array`.
+    fill:
+        The candidate fill value. None answers False — a column that declares
+        no fill has nothing to collide with. NaN is compared as NaN rather
+        than by equality, which no NaN satisfies.
     """
     pa = require_pyarrow()
     # Importing the submodule registers it on the package; reaching it through
@@ -806,6 +962,16 @@ def _fill_for(spec: Any, field: Any, column: Any) -> Any:
     Raises rather than choosing something unsafe. There is no correct fill for a
     column that already contains the one H5Col recommends, and none at all for a
     boolean, which the convention forbids from declaring one.
+
+    Parameters
+    ----------
+    spec:
+        The column's spec. A ``fill_value`` already set on it is the caller's
+        own choice, and is checked rather than replaced.
+    field:
+        The Arrow field, used only to make an error message specific.
+    column:
+        The column's data, which the fill is checked against.
     """
     if spec.is_boolean:
         if column.null_count:
@@ -872,8 +1038,11 @@ def prepared_specs(table: Any, specs: Any = None) -> list[Any]:
     out = []
     for field in table.schema:
         spec = by_name[field.name]
+        column = table.column(field.name)
         if isinstance(spec, ColumnSpec):
-            spec.fill_value = _fill_for(spec, field, table.column(field.name))
+            spec.fill_value = _fill_for(spec, field, column)
+        else:
+            _apply_list_fills(field.name, spec.values, _flatten(column))
         out.append(spec)
     return out
 
@@ -894,6 +1063,10 @@ def append_values(spec: Any, column: Any) -> Any:
         The batch's column, as a :class:`pyarrow.Array`.
     """
     pa = require_pyarrow()
+    if isinstance(spec, ListColumnSpec):
+        # Ragged rows have no array form; `append` takes one list per row, with
+        # None for a null row and None for a null element.
+        return column.to_pylist()
     if spec.is_categorical or FixedString.is_fixed_string(spec.resolved_dtype()):
         # Labels and text go across as Python objects; `append` maps None to the
         # column's fill for both.
@@ -918,3 +1091,82 @@ def append_values(spec: Any, column: Any) -> Any:
     return np.asarray(filled.to_numpy(zero_copy_only=False)).astype(
         spec.resolved_dtype(), copy=False
     )
+
+
+def _flatten(column: Any) -> Any:
+    """One level down a list column: its element values, nulls included.
+
+    Parameters
+    ----------
+    column:
+        A list column, as a chunked array or a plain one. Chunks are combined
+        first, so the result is a single array whatever arrived.
+    """
+    combined = column.combine_chunks() if hasattr(column, "combine_chunks") else column
+    return combined.flatten()
+
+
+def _leaf_fill(field_name: str, leaf: Any, values: Any) -> Any:
+    """The fill for a list column's leaf, checked against the values it holds.
+
+    The same rule as a scalar column, one level down: a leaf element equal to
+    the fill reads back as ``None``, so a fill that already occurs among the
+    elements is refused. A boolean leaf declares no fill, so a null element has
+    nowhere to go at all.
+
+    Parameters
+    ----------
+    field_name:
+        The column's name, used only to make an error message specific.
+    leaf:
+        The leaf's spec. A ``fill_value`` already set on it is the caller's own
+        choice, and is checked rather than replaced.
+    values:
+        The elements this leaf will hold, flattened out of every level above
+        it.
+    """
+    if leaf.is_boolean:
+        if values.null_count:
+            raise SchemaError(
+                f"column {field_name!r}: H5Col boolean values declare no fill "
+                f"value, so this column's {values.null_count} null element(s) "
+                f"have nowhere to be stored"
+            )
+        return None
+    fill = leaf.fill_value
+    chosen_by_caller = fill is not None
+    if not chosen_by_caller:
+        fill = recommended_fill(leaf.resolved_dtype())
+    if _fill_occurs_in_data(values, fill):
+        source = "supplied" if chosen_by_caller else "recommended"
+        raise SchemaError(
+            f"column {field_name!r}: the {source} fill value {fill!r} occurs "
+            f"among the list elements, so those elements would read as missing; "
+            f"pass a spec with a fill_value the data does not contain"
+        )
+    validate_fill_outside_range(fill, leaf.valid_min, leaf.valid_max)
+    return fill
+
+
+def _apply_list_fills(field_name: str, values_spec: Any, values: Any) -> None:
+    """Set and check the fill at every level of a list column's value tree.
+
+    Walks the spec and the data together, because each level's fill has to be
+    checked against the elements that level will actually hold.
+
+    Parameters
+    ----------
+    field_name:
+        The column's name, used only to make an error message specific.
+    values_spec:
+        This level's ``VALUES`` member. A leaf has its ``fill_value`` set in
+        place; deeper levels are recursed into.
+    values:
+        This level's values, flattened out of the level above.
+    """
+    if isinstance(values_spec, StringValuesSpec):
+        return  # a null string element is a MASK bit, not a fill value
+    if isinstance(values_spec, NestedListSpec):
+        _apply_list_fills(field_name, values_spec.values, _flatten(values))
+        return
+    values_spec.fill_value = _leaf_fill(field_name, values_spec, values)

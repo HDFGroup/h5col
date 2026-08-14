@@ -173,12 +173,6 @@ def test_a_spec_for_an_unknown_column_is_refused(h5file: h5py.File) -> None:
 # --------------------------------------------------------------------------- #
 # What is refused
 # --------------------------------------------------------------------------- #
-def test_list_columns_are_not_implemented_yet(h5file: h5py.File) -> None:
-    source = pa.table({"xs": pa.array([[1.0, 2.0]], type=pa.large_list(pa.float64()))})
-    with pytest.raises(SchemaError, match="not implemented yet"):
-        Table.from_arrow(h5file.create_group("t"), source)
-
-
 def test_an_unsupported_type_is_refused_before_the_group_is_touched(
     h5file: h5py.File,
 ) -> None:
@@ -228,3 +222,166 @@ def test_a_boolean_only_table_imports_in_a_fresh_interpreter() -> None:
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# List columns
+#
+# A list column marks a null row with a MASK but a null *element* with a fill
+# value, so the collision hazard of a scalar column exists again at every level
+# of nesting — and once more for each level below that.
+# --------------------------------------------------------------------------- #
+def _list_sample() -> Any:
+    return pa.table(
+        {
+            "i": pa.array([1, 2, 3]),
+            "xs": pa.array([[1.0, None], None, []], type=pa.large_list(pa.float64())),
+            "tags": pa.array(
+                [["red", None], [], ["blue"]], type=pa.large_list(pa.large_string())
+            ),
+            "nest": pa.array(
+                [[[1.0], [2.0, 3.0]], None, [[4.0]]],
+                type=pa.large_list(pa.large_list(pa.float64())),
+            ),
+        }
+    )
+
+
+def test_list_columns_round_trip(h5file: h5py.File) -> None:
+    source = _list_sample()
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    back = table.to_arrow()
+    for name in source.schema.names:
+        assert back.column(name).to_pylist() == source.column(name).to_pylist(), name
+
+
+def test_an_imported_list_table_is_conformant(h5file: h5py.File) -> None:
+    Table.from_arrow(h5file.create_group("t"), _list_sample()).validate(deep=True)
+
+
+def test_a_null_row_stays_distinct_from_an_empty_one(h5file: h5py.File) -> None:
+    table = Table.from_arrow(h5file.create_group("t"), _list_sample())
+    rows = table["xs"].read()
+    assert rows[1] is None  # the null row
+    assert rows[2] == []  # the empty row, which is a value
+
+
+@pytest.mark.parametrize("name", ["xs", "nest"])
+def test_nullable_levels_follow_the_data(h5file: h5py.File, name: str) -> None:
+    table = Table.from_arrow(h5file.create_group("t"), _list_sample())
+    assert table[name].nullable is True
+
+
+def test_no_mask_is_created_when_nothing_is_null(h5file: h5py.File) -> None:
+    # A MASK is a dataset per level; one that marks nothing is pure overhead.
+    source = pa.table(
+        {"xs": pa.array([[1.0, 2.0], [3.0]], type=pa.large_list(pa.float64()))}
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert table["xs"].nullable is False
+    assert "MASK" not in table["xs"].group
+
+
+def test_a_fill_among_the_list_elements_is_refused(h5file: h5py.File) -> None:
+    from h5col import recommended_fill
+
+    collides = int(recommended_fill(np.dtype("int8")))
+    source = pa.table(
+        {"xs": pa.array([[1, collides], [2]], type=pa.large_list(pa.int8()))}
+    )
+    with pytest.raises(SchemaError, match="occurs among the list elements"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_the_leaf_check_reaches_through_nesting(h5file: h5py.File) -> None:
+    from h5col import recommended_fill
+
+    collides = int(recommended_fill(np.dtype("int8")))
+    source = pa.table(
+        {"n": pa.array([[[1, collides]]], type=pa.large_list(pa.large_list(pa.int8())))}
+    )
+    with pytest.raises(SchemaError, match="occurs among the list elements"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_a_boolean_leaf_with_a_null_element_is_refused(h5file: h5py.File) -> None:
+    source = pa.table(
+        {"flags": pa.array([[True, None]], type=pa.large_list(pa.bool_()))}
+    )
+    with pytest.raises(SchemaError, match="nowhere to be stored"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_a_boolean_leaf_without_nulls_is_fine(h5file: h5py.File) -> None:
+    source = pa.table(
+        {"flags": pa.array([[True, False], []], type=pa.large_list(pa.bool_()))}
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert table["flags"].read() == [[True, False], []]
+
+
+def test_null_string_elements_need_no_fill(h5file: h5py.File) -> None:
+    # STRING_VALUES marks a null element with a MASK bit, so there is no value
+    # that could collide with the data — including the empty string, which is
+    # a real value here rather than a missing marker.
+    source = pa.table(
+        {"tags": pa.array([["", None, "x"]], type=pa.large_list(pa.large_string()))}
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert table["tags"].read() == [["", None, "x"]]
+
+
+def test_list_column_annotations_survive(h5file: h5py.File) -> None:
+    field = pa.field(
+        "xs",
+        pa.large_list(pa.float64()),
+        metadata={"h5col.units": "m", "h5col.description": "depths"},
+    )
+    source = pa.table(
+        [pa.array([[1.0]], type=pa.large_list(pa.float64()))], schema=pa.schema([field])
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert table["xs"].units == "m"
+    assert table["xs"].description == "depths"
+
+
+def test_a_mixed_table_of_scalar_and_list_columns(h5file: h5py.File) -> None:
+    source = _list_sample()
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert table.column_names == ["i", "xs", "tags", "nest"]
+    assert table["i"].read().tolist() == [1, 2, 3]
+
+
+def test_inner_levels_get_no_mask_when_they_hold_no_nulls(h5file: h5py.File) -> None:
+    # Nullability is decided per level from that level's own data. A nested
+    # list whose inner lists are never null needs no MASK there, even though
+    # the rows above it may.
+    source = pa.table(
+        {
+            "nest": pa.array(
+                [[[1.0], [2.0]], None],
+                type=pa.large_list(pa.large_list(pa.float64())),
+            )
+        }
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    group = table["nest"].group
+    assert "MASK" in group  # the null row at the top
+    assert "MASK" not in group["VALUES"]  # but no null inner list
+
+
+def test_string_values_get_no_mask_when_no_element_is_null(h5file: h5py.File) -> None:
+    source = pa.table(
+        {"tags": pa.array([["a", "b"], []], type=pa.large_list(pa.large_string()))}
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert "MASK" not in table["tags"].group["VALUES"]
+
+
+def test_string_values_get_a_mask_when_an_element_is_null(h5file: h5py.File) -> None:
+    source = pa.table(
+        {"tags": pa.array([["a", None]], type=pa.large_list(pa.large_string()))}
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    assert "MASK" in table["tags"].group["VALUES"]
+    assert table["tags"].read() == [["a", None]]

@@ -512,12 +512,6 @@ class Table:
             If a column name, or a producer metadata key, is one H5Col reserves.
         """
         prepared = arrow.prepared_specs(table, specs)
-        unsupported = [s.name for s in prepared if isinstance(s, ListColumnSpec)]
-        if unsupported:
-            raise SchemaError(
-                f"importing list columns is not implemented yet: {unsupported}"
-            )
-
         out = cls.create(group, prepared, **table_kwargs)
         by_name = {s.name: s for s in prepared}
         for batch in table.to_batches():
