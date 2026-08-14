@@ -45,6 +45,15 @@ def target_chunk_bytes(group: Any, override: int | None = None) -> int:
     An explicit *override* (``Table.create(default_chunk_bytes=...)``) is used as
     given. Otherwise the target is ``CACHE_FRACTION`` of the file's chunk cache,
     clamped to ``[MIN_CHUNK_BYTES, MAX_CHUNK_BYTES]``.
+
+    Parameters
+    ----------
+    group:
+        Any object in the destination file. Only its file's chunk-cache
+        setting is read.
+    override:
+        An explicit target in bytes, used as given (floored at one byte). None
+        derives one from the cache.
     """
     if override is not None:
         return max(1, int(override))
@@ -55,7 +64,18 @@ def target_chunk_bytes(group: Any, override: int | None = None) -> int:
 def default_chunk_len(
     dtype: Any, group: Any, default_chunk_bytes: int | None = None
 ) -> int:
-    """Rows per chunk for a column of *dtype* under the default chunk policy."""
+    """Rows per chunk for a column of *dtype* under the default chunk policy.
+
+    Parameters
+    ----------
+    dtype:
+        The column's datatype, whose itemsize divides the byte target.
+    group:
+        Any object in the destination file, passed on to
+        :func:`target_chunk_bytes`.
+    default_chunk_bytes:
+        An explicit byte target for one chunk, or None for the default policy.
+    """
     itemsize = max(1, int(np.dtype(dtype).itemsize))
     return max(1, target_chunk_bytes(group, default_chunk_bytes) // itemsize)
 
@@ -82,6 +102,28 @@ def create_column_dataset(
     high-level API instead, because its low-level ``set_fill_value`` is broken
     for strings; that path (via :meth:`FilterPipeline.to_h5py_kwargs`) cannot
     express an arbitrary filter order or optional flags.
+
+    Parameters
+    ----------
+    group:
+        The h5py group to create the dataset in.
+    name:
+        The dataset's link name within *group*.
+    dtype:
+        The column's datatype: numeric, the H5Col boolean enum, or a
+        fixed-length string.
+    chunks:
+        Rows per chunk, as an int or a 1-tuple. None sizes the chunk by the
+        default policy, see :func:`default_chunk_len`.
+    fill_value:
+        The value marking a missing row, or None for no user-defined fill.
+    filters:
+        The pipeline to apply, or None for an unfiltered dataset.
+    initial_len:
+        How many rows to create the dataset with; it grows from there.
+    default_chunk_bytes:
+        An explicit byte target for one chunk, used only when *chunks* is
+        None.
     """
     chunk: tuple[int, ...]
     if chunks is None:
@@ -119,7 +161,16 @@ def create_column_dataset(
 
 
 def extend_to(dataset: Any, new_len: int) -> None:
-    """Grow *dataset*'s first dimension to at least *new_len* rows."""
+    """Grow *dataset*'s first dimension to at least *new_len* rows.
+
+    Parameters
+    ----------
+    dataset:
+        A rank-1 dataset that is resizable along axis 0.
+    new_len:
+        The row count to reach. A dataset already that long is left alone, so
+        this never shrinks one.
+    """
     if dataset.shape[0] < new_len:
         dataset.resize((new_len,))
 
@@ -203,6 +254,18 @@ def gather_rows(dataset: Any, rows: np.ndarray, nrows: int) -> np.ndarray:
 
     A contiguous (unchunked) dataset has nothing to coalesce, so it is read
     once and indexed.
+
+    Parameters
+    ----------
+    dataset:
+        The column dataset to read from.
+    rows:
+        Row positions, ascending and within ``[0, nrows)``. Neither is checked
+        here: the caller normalizes with :func:`row_positions` and sorts, then
+        restores its own order afterwards.
+    nrows:
+        The column's row count, which bounds the last block read so the rows
+        reserved above it are never touched.
     """
     rows = np.asarray(rows, dtype=np.int64)
     if rows.size == 0:
@@ -260,6 +323,15 @@ def substitute_fill_for_none(dataset: Any, values: Any, name: str) -> Any:
     the already-typed fast path is not scanned or copied. Inputs that are not
     sequences are returned as-is for the caller's own 1-D check to reject.
 
+    Parameters
+    ----------
+    dataset:
+        The column dataset, whose fill value stands in for the missing rows.
+    values:
+        The row values about to be appended.
+    name:
+        The column's name, used only to make the error messages specific.
+
     Raises
     ------
     SchemaError
@@ -296,6 +368,13 @@ def prepare_column_data(dtype: Any, values: Any) -> np.ndarray:
 
     Fixed-length strings are byte-checked (raising rather than truncating),
     booleans are domain-checked, and numeric values are cast to the column dtype.
+
+    Parameters
+    ----------
+    dtype:
+        The column's datatype, which decides which of the three encodings runs.
+    values:
+        The row values to encode.
     """
     if FixedString.is_fixed_string(dtype):
         return FixedString.from_dtype(dtype).encode(values)
@@ -314,14 +393,36 @@ def _to_str(value: Any) -> str:
 
 
 def write_ascii_token_attr(obj: Any, name: str, value: str) -> None:
-    """Write a scalar fixed-length ASCII reserved-token attribute (CLASS, ...)."""
+    """Write a scalar fixed-length ASCII reserved-token attribute (CLASS, ...).
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to write the attribute on.
+    name:
+        The attribute's name.
+    value:
+        The token, which H5Col defines as ASCII. Its length sizes the datatype,
+        with room for a trailing NUL.
+    """
     obj.attrs.create(
         name, np.array(value.encode("ascii"), dtype=ascii_token_dtype(value))
     )
 
 
 def write_utf8_attr(obj: Any, name: str, value: str) -> None:
-    """Write a scalar fixed-length UTF-8 string attribute."""
+    """Write a scalar fixed-length UTF-8 string attribute.
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to write the attribute on.
+    name:
+        The attribute's name.
+    value:
+        The string. Its encoded length sizes the datatype, with room for a
+        trailing NUL.
+    """
     nbytes = len(value.encode("utf-8")) + 1
     obj.attrs.create(
         name, np.array(value.encode("utf-8"), dtype=FixedString(nbytes).dtype)
@@ -329,7 +430,18 @@ def write_utf8_attr(obj: Any, name: str, value: str) -> None:
 
 
 def write_utf8_array_attr(obj: Any, name: str, values: Sequence[str]) -> None:
-    """Write a 1-D fixed-length UTF-8 string array attribute (e.g. column-order)."""
+    """Write a 1-D fixed-length UTF-8 string array attribute (e.g. column-order).
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to write the attribute on.
+    name:
+        The attribute's name.
+    values:
+        The strings, which share one width taken from the widest of them. An
+        empty sequence writes an empty array rather than no attribute.
+    """
     if len(values) == 0:
         obj.attrs.create(name, np.array([], dtype=FixedString(1).dtype))
         return
@@ -346,6 +458,15 @@ def write_uint64_attr(obj: Any, name: str, value: int) -> None:
     ``GENERATION`` left by a foreign tool) is deleted and recreated as scalar
     uint64 — ``attrs.modify`` alone would silently preserve the malformed
     datatype forever.
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to write the attribute on.
+    name:
+        The attribute's name.
+    value:
+        The number to store.
     """
     if name in obj.attrs:
         existing = np.asarray(obj.attrs[name])
@@ -362,6 +483,15 @@ def write_bool_attr(obj: Any, name: str, value: bool) -> None:
     h5py maps NumPy ``bool`` to exactly the H5Col boolean datatype on disk.
     Like :func:`write_uint64_attr`, an existing attribute of the wrong shape or
     datatype is deleted and recreated rather than silently preserved.
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to write the attribute on.
+    name:
+        The attribute's name.
+    value:
+        The value to store.
     """
     if name in obj.attrs:
         existing = obj.attrs[name]
@@ -378,6 +508,13 @@ def read_bool_attr(obj: Any, name: str) -> bool | None:
     h5py reads any one-byte ``FALSE``/``TRUE`` enum — exactly the set the
     H5Col tolerance rule admits — as NumPy ``bool``; anything else (a plain
     integer, a string, an array) is not a H5Col boolean and yields None.
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to read the attribute from.
+    name:
+        The attribute's name.
     """
     if name not in obj.attrs:
         return None
@@ -388,27 +525,60 @@ def read_bool_attr(obj: Any, name: str) -> bool | None:
 
 
 def read_str_attr(obj: Any, name: str) -> str | None:
-    """Read a scalar string attribute as ``str`` (or None if absent)."""
+    """Read a scalar string attribute as ``str`` (or None if absent).
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to read the attribute from.
+    name:
+        The attribute's name.
+    """
     if name not in obj.attrs:
         return None
     return _to_str(obj.attrs[name])
 
 
 def read_str_array_attr(obj: Any, name: str) -> list[str] | None:
-    """Read a 1-D string attribute as a list of ``str`` (or None if absent)."""
+    """Read a 1-D string attribute as a list of ``str`` (or None if absent).
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to read the attribute from.
+    name:
+        The attribute's name.
+    """
     if name not in obj.attrs:
         return None
     return [_to_str(v) for v in obj.attrs[name]]
 
 
 def read_uint64_attr(obj: Any, name: str) -> int | None:
-    """Read a scalar integer attribute as ``int`` (or None if absent)."""
+    """Read a scalar integer attribute as ``int`` (or None if absent).
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to read the attribute from.
+    name:
+        The attribute's name.
+    """
     if name not in obj.attrs:
         return None
     return int(obj.attrs[name])
 
 
 def has_attr(obj: Any, name: str) -> bool:
+    """True if the attribute is present, whatever its value.
+
+    Parameters
+    ----------
+    obj:
+        The dataset or group to look at.
+    name:
+        The attribute's name.
+    """
     return name in obj.attrs
 
 
