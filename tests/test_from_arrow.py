@@ -462,3 +462,86 @@ def test_a_list_of_fixed_size_binary_imports(h5file: h5py.File) -> None:
         [],
         [b"\x02" * 4, b"\x03" * 4],
     ]
+
+
+# --------------------------------------------------------------------------- #
+# When the recommended fill value is already in the data
+#
+# Refusing is right: the column needs a fill and this one would make real values
+# read as missing. What the caller then needs is a way to name another.
+# --------------------------------------------------------------------------- #
+def _byte_levels() -> Any:
+    # 255 is the recommended uint8 fill and an entirely ordinary byte value.
+    return pa.table({"level": pa.array([1, 255, 3], type=pa.uint8())})
+
+
+def test_inference_returns_specs_even_when_the_fill_collides() -> None:
+    # The remedy is to set a fill value on the specs, so getting the specs
+    # cannot itself be what fails.
+    specs = specs_from_arrow(_byte_levels())
+    assert specs[0].name == "level"
+    assert specs[0].fill_value is None  # unset means the recommended one
+
+
+def test_writing_still_refuses_the_collision(h5file: h5py.File) -> None:
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        Table.from_arrow(h5file.create_group("t"), _byte_levels())
+
+
+def test_the_refusal_names_a_fill_value_that_would_work(h5file: h5py.File) -> None:
+    with pytest.raises(SchemaError, match=r"254.*does not occur"):
+        Table.from_arrow(h5file.create_group("t"), _byte_levels())
+
+
+def test_the_suggested_value_actually_works(h5file: h5py.File) -> None:
+    # A suggestion that did not import would be worse than none at all.
+    specs = specs_from_arrow(_byte_levels())
+    specs[0].fill_value = np.uint8(254)
+    table = Table.from_arrow(h5file.create_group("t"), _byte_levels(), specs=specs)
+    table.validate(deep=True)
+    assert table["level"].read().tolist() == [1, 255, 3]
+    assert not table["level"].is_missing().any()
+
+
+def test_a_column_using_its_whole_datatype_is_told_to_widen(h5file: h5py.File) -> None:
+    full = pa.table({"b": pa.array(list(range(256)), type=pa.uint8())})
+    with pytest.raises(SchemaError, match="widen the datatype"):
+        Table.from_arrow(h5file.create_group("t"), full)
+
+
+def test_a_list_leaf_gets_a_suggestion_too(h5file: h5py.File) -> None:
+    # Where this bites hardest: list elements are often small integers using
+    # their whole range, so a list of bytes containing 255 is unremarkable.
+    source = pa.table({"xs": pa.array([[1, 255], [3]], type=pa.large_list(pa.uint8()))})
+    with pytest.raises(SchemaError, match=r"254.*does not occur"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+    specs = specs_from_arrow(source)
+    specs[0].values.fill_value = np.uint8(254)
+    table = Table.from_arrow(h5file.create_group("ok"), source, specs=specs)
+    table.validate(deep=True)
+    assert table["xs"].read() == [[1, 255], [3]]
+
+
+def test_a_signed_suggestion_skips_the_types_minimum(h5file: h5py.File) -> None:
+    # H5Col recommends INT_MIN + 1 and leaves INT_MIN alone, keeping a margin
+    # against operations that land on it. A suggestion should respect that.
+    source = pa.table({"v": pa.array([1, -127], type=pa.int8())})
+    with pytest.raises(SchemaError, match=r"-126.*does not occur"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_no_suggestion_is_offered_for_a_string_column(h5file: h5py.File) -> None:
+    # The candidate space for text is not one to walk; the caller chooses.
+    source = pa.table({"s": pa.array(["a", ""], type=pa.large_string())})
+    with pytest.raises(SchemaError, match="a fill_value the data does not contain"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_a_boolean_with_nulls_is_refused_when_written(h5file: h5py.File) -> None:
+    # Inference now returns specs for it — changing the dtype is a real remedy
+    # — but writing it still refuses.
+    source = pa.table({"flag": pa.array([True, None])})
+    assert specs_from_arrow(source)[0].is_boolean
+    with pytest.raises(SchemaError, match="nowhere to be stored"):
+        Table.from_arrow(h5file.create_group("t"), source)

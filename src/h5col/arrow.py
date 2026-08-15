@@ -979,11 +979,16 @@ def specs_from_arrow(table: Any) -> list[Any]:
     across as a producer attribute, unless its name is one H5Col reserves.
 
     Arrow marks a missing value with a null; H5Col marks one with a value drawn
-    from the column's own domain. Each column therefore gets a fill value, the
-    recommended one for its datatype unless a supplied spec chooses otherwise —
-    and a fill that already occurs in the data is refused, because those rows
-    would read as missing. A boolean column with nulls is refused outright:
-    H5Col forbids a fill there, so the nulls have nowhere to go.
+    from the column's own domain. The specs come back with ``fill_value`` unset,
+    which means the recommended value for the datatype, as it does anywhere
+    else. Whether that value is safe *for this data* is not decided here — a
+    fill that already occurs in a column is refused when the table is written,
+    since setting one is the remedy and it has to be possible to get the specs
+    in order to set it::
+
+        specs = h5col.specs_from_arrow(tbl)
+        specs[0].fill_value = 254
+        h5col.Table.from_arrow(group, tbl, specs=specs)
 
     .. versionadded:: 0.4.0
 
@@ -996,12 +1001,8 @@ def specs_from_arrow(table: Any) -> list[Any]:
     ------
     SchemaError
         If two fields share a name (HDF5 links are unique), if a column's type
-        has no H5Col equivalent, if a ``h5col.`` metadata key is not one this
-        importer understands, if a boolean column holds nulls, or if a column's
-        fill value occurs in its data.
-    FillValueError
-        If a column's fill value falls inside a valid range its metadata
-        declares.
+        has no H5Col equivalent, or if a ``h5col.`` metadata key is not one this
+        importer understands.
     ReservedNameError
         If a column name, or a producer metadata key, is a name H5Col reserves.
     """
@@ -1017,10 +1018,7 @@ def specs_from_arrow(table: Any) -> list[Any]:
     for field in table.schema:
         validate_column_name(field.name)
         column = table.column(field.name)
-        spec = _spec_from_field(field, column)
-        if isinstance(spec, ColumnSpec):
-            spec.fill_value = _fill_for(spec, field, column)
-        specs.append(spec)
+        specs.append(_spec_from_field(field, column))
     return specs
 
 
@@ -1080,6 +1078,116 @@ def _fill_occurs_in_data(column: Any, fill: Any) -> bool:
     return found.as_py() is True
 
 
+#: How many values near a datatype's limits to try when suggesting a fill. Only
+#: ever walked on the way to raising, so the cost buys a better message.
+_FILL_SUGGESTIONS = 16
+
+
+def _fill_candidates(dtype: np.dtype) -> list[Any]:
+    """Fill values worth trying for an integer *dtype*, best first.
+
+    Values at the limits of a type are the least likely to be real data, which
+    is where H5Col puts its recommendations. Unsigned types are walked down from
+    the maximum, signed types up from the minimum *plus one* — the convention
+    leaves a type's minimum alone deliberately, keeping a margin against
+    operations that land on it.
+
+    Parameters
+    ----------
+    dtype:
+        An integer datatype.
+    """
+    info = np.iinfo(dtype)
+    if dtype.kind == "u":
+        top = int(info.max)
+        values = range(top, top - _FILL_SUGGESTIONS, -1)
+    else:
+        bottom = int(info.min) + 1
+        values = range(bottom, bottom + _FILL_SUGGESTIONS)
+    return [dtype.type(v) for v in values]
+
+
+def _suggest_fill(data: Any, dtype: np.dtype) -> Any:
+    """A fill value near *dtype*'s limits that *data* does not contain.
+
+    None when the datatype is not an integer one — float, string and opaque
+    collisions are rare enough, and their candidate spaces odd enough, that the
+    caller is better placed to choose — or when every candidate tried occurs in
+    the data anyway.
+
+    Parameters
+    ----------
+    data:
+        The column or the flattened list elements, whichever is being checked.
+    dtype:
+        The datatype a fill is wanted for.
+    """
+    if dtype.kind not in ("i", "u"):
+        return None
+    for candidate in _fill_candidates(dtype):
+        if not _fill_occurs_in_data(data, candidate):
+            return candidate
+    return None
+
+
+def _collision_error(
+    name: str,
+    fill: Any,
+    *,
+    supplied: bool,
+    where: str,
+    what: str,
+    data: Any,
+    dtype: np.dtype,
+) -> SchemaError:
+    """The refusal for a fill value the data contains, carrying a way out.
+
+    Refusing is right — the column needs a fill and this one would make real
+    values read as missing — but the caller then has to name another, so the
+    message names one that would work rather than leaving them to search.
+
+    The suggestion is deliberately conditional. A value absent from *this* data
+    is not the same as a value outside the column's logical range, which is what
+    H5Col asks for and only the caller knows.
+
+    Parameters
+    ----------
+    name:
+        The column's name.
+    fill:
+        The fill value that collided.
+    supplied:
+        True when the caller chose it, False when it is the recommendation.
+    where:
+        Where the collision is, phrased for the message.
+    what:
+        What would read as missing: ``"rows"`` or ``"elements"``.
+    data:
+        The values the collision was found in, searched again for a suggestion.
+    dtype:
+        The column or leaf datatype.
+    """
+    suggestion = _suggest_fill(data, dtype)
+    if suggestion is not None:
+        remedy = (
+            f"{suggestion!r} does not occur — pass a spec with that as its "
+            f"fill_value if it lies outside the column's logical range"
+        )
+    elif dtype.kind in ("i", "u"):
+        remedy = (
+            f"nor is any other value near the limits of {dtype}; a column using "
+            f"its whole datatype has no value left to mark absence, so widen the "
+            f"datatype, which is what H5Col prescribes for this"
+        )
+    else:
+        remedy = "pass a spec with a fill_value the data does not contain"
+    source = "supplied" if supplied else "recommended"
+    return SchemaError(
+        f"column {name!r}: the {source} fill value {fill!r} occurs {where}, so "
+        f"those {what} would read as missing; {remedy}"
+    )
+
+
 def _fill_for(spec: Any, field: Any, column: Any) -> Any:
     """The fill value to import *column* with, or None when it declares none.
 
@@ -1116,11 +1224,14 @@ def _fill_for(spec: Any, field: Any, column: Any) -> Any:
     if not chosen_by_caller:
         fill = recommended_fill(spec.resolved_dtype())
     if _fill_occurs_in_data(column, fill):
-        source = "supplied" if chosen_by_caller else "recommended"
-        raise SchemaError(
-            f"column {field.name!r}: the {source} fill value {fill!r} occurs in "
-            f"the data, so those rows would read as missing; pass a ColumnSpec "
-            f"with a fill_value the column does not contain"
+        raise _collision_error(
+            field.name,
+            fill,
+            supplied=chosen_by_caller,
+            where="in the data",
+            what="rows",
+            data=column,
+            dtype=spec.resolved_dtype(),
         )
     validate_fill_outside_range(fill, spec.valid_min, spec.valid_max)
     return fill
@@ -1264,11 +1375,14 @@ def _leaf_fill(field_name: str, leaf: Any, values: Any) -> Any:
     if not chosen_by_caller:
         fill = recommended_fill(leaf.resolved_dtype())
     if _fill_occurs_in_data(values, fill):
-        source = "supplied" if chosen_by_caller else "recommended"
-        raise SchemaError(
-            f"column {field_name!r}: the {source} fill value {fill!r} occurs "
-            f"among the list elements, so those elements would read as missing; "
-            f"pass a spec with a fill_value the data does not contain"
+        raise _collision_error(
+            field_name,
+            fill,
+            supplied=chosen_by_caller,
+            where="among the list elements",
+            what="elements",
+            data=values,
+            dtype=leaf.resolved_dtype(),
         )
     validate_fill_outside_range(fill, leaf.valid_min, leaf.valid_max)
     return fill

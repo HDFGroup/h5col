@@ -64,6 +64,26 @@ to follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A fill value that occurs in its own column was a dead end. `from_arrow`
+  refused such a column and told the caller to supply a `ColumnSpec` with a
+  different fill. But `specs_from_arrow` refused it too, so the advice could not
+  be followed. A `uint8` column containing 255, or a `list<uint8>` containing
+  one, was simply unimportable.
+
+  Deciding a fill value has moved to where the table is written.
+  `specs_from_arrow` now answers what the columns would look like and stops
+  there, returning specs whose `fill_value` is unset, meaning the recommended
+  value for the datatype, as it does everywhere else. The check itself is
+  unchanged and still unskippable. It runs on write whichever way the specs
+  arrived. The refusal also names a value that would work, found by walking
+  inward from the limits of the datatype, where H5Col puts its recommendations
+  for the same reason. Signed types skip their own minimum. The suggestion is
+  offered rather than applied. A value absent from the data at hand is not the
+  same as one outside the column's logical range, and picking silently would
+  mean a later `append` could turn real rows into missing ones. Where nothing
+  near the limits is free, the message says so and offers the remedy: widen the
+  datatype.
+
 - The Arrow export left the `ordered` flag of a categorical column's Arrow
   type at 0 even for an ordered categorical, recording the fact only in the
   `h5col.ordered` metadata key. A consumer reading the type rather than the

@@ -102,14 +102,36 @@ import is refused:
 
 ```text
 SchemaError: column 'delta': the recommended fill value np.int8(-127) occurs
-in the data, so those rows would read as missing; pass a ColumnSpec with a
-fill_value the column does not contain
+in the data, so those rows would read as missing; np.int8(-126) does not
+occur — pass a spec with that as its fill_value if it lies outside the
+column's logical range
 ```
 
 This check is worth the trouble it occasionally causes. Without it you get a
 file that passes `validate(deep=True)` and reads back with rows quietly
 missing that were never missing at all, the kind of error that surfaces
 months later in someone's analysis.
+
+The suggested value is a genuine offer and not a decision made for you. Note
+what it does *not* claim: a value absent from the data is not the same as a
+value outside the column's logical range, which is what H5Col asks for. If
+`-126` is a reading your instrument can produce, take a different one or widen
+the datatype, which is what the convention prescribes for a column with no value
+to spare. That is also what the message says when nothing near the limits of the
+type is free:
+
+```text
+... nor is any other value near the limits of uint8; a column using its whole
+datatype has no value left to mark absence, so widen the datatype, which is
+what H5Col prescribes for this
+```
+
+Choosing a fill value on your behalf would be the wrong kind of helpful. The
+recommended value is documented, so a reader knows what a `uint8` column's fill
+is without opening the file; one picked per import from whatever the data
+happened to contain is knowable only after the fact. And if a later `append`
+brought in a value we had quietly reserved, those rows would start reading as
+missing.
 
 The same rule applies inside a list column, at every level of nesting: a null
 element becomes the leaf's fill value, so a leaf that already contains that
@@ -150,9 +172,15 @@ fill value the data does not contain, widen a string column beyond what its
 current values need, or fix anything else the inference got merely defensible
 rather than right.
 
-What the checks will not let you do is skip them. Supplying specs chooses the
-fill value, it does not waive the check that the fill is absent from the data,
-because that is the one importing mistake that produces a conformant file with
+`specs_from_arrow` answers what the columns would look like, and stops there.
+It does not check a fill value against the data, which is deliberate: setting
+one is the way out of a collision, so getting hold of the specs cannot itself
+be the thing that fails. A spec whose `fill_value` is unset means the
+recommended value for its datatype, as it does anywhere else in the package.
+
+What you cannot do is skip the check. It runs when the table is written,
+whichever way the specs arrived, because a fill value that occurs in its own
+column is the one importing mistake that produces a conformant file with
 unreadable rows.
 
 ## What the inference reads from the data
