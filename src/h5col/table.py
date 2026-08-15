@@ -313,6 +313,34 @@ class Table:
                 )
             validate_fill_outside_range(cast_fill, col.valid_min, col.valid_max)
             return
+        Table._checked_fill(col)
+
+    @staticmethod
+    def _checked_fill(col: ColumnSpec) -> Any:
+        """The fill value to create ``col`` with, or ``None`` where it declares none.
+
+        The single place that decides both what a legal fill value is and which
+        value a column ends up with. Creation and validation each of
+        those answers need run at different moments.
+
+        Categorical columns do not come here: they carry their own fill rule,
+        checked in :meth:`_validate_column_spec` and applied in
+        :meth:`_create_categorical_column`.
+
+        Parameters
+        ----------
+        col:
+            A non-categorical column spec, left unmodified.
+
+        Raises
+        ------
+        SchemaError
+            If a boolean column declares a fill value or a valid range. H5Col
+            leaves a boolean no value outside its own two, so either is a
+            contradiction rather than a preference.
+        FillValueError
+            If the fill value lies inside the column's declared valid range.
+        """
         if col.is_boolean:
             if col.fill_value is not None:
                 raise SchemaError(
@@ -322,13 +350,14 @@ class Table:
                 raise SchemaError(
                     f"boolean column {col.name!r} must not declare valid_min/valid_max"
                 )
-        else:
-            fill = (
-                col.fill_value
-                if col.fill_value is not None
-                else recommended_fill(col.resolved_dtype())
-            )
-            validate_fill_outside_range(fill, col.valid_min, col.valid_max)
+            return None
+        fill = (
+            col.fill_value
+            if col.fill_value is not None
+            else recommended_fill(col.resolved_dtype())
+        )
+        validate_fill_outside_range(fill, col.valid_min, col.valid_max)
+        return fill
 
     @staticmethod
     def _create_one_column(
@@ -367,23 +396,7 @@ class Table:
                 group, col, name, dtype, default_chunk_bytes=default_chunk_bytes
             )
 
-        if col.is_boolean:
-            if col.fill_value is not None:
-                raise SchemaError(
-                    f"boolean column {name!r} must not declare a fill value"
-                )
-            if col.valid_min is not None or col.valid_max is not None:
-                raise SchemaError(
-                    f"boolean column {name!r} must not declare valid_min/valid_max"
-                )
-            fill: Any = None
-        else:
-            fill = (
-                col.fill_value
-                if col.fill_value is not None
-                else recommended_fill(dtype)
-            )
-            validate_fill_outside_range(fill, col.valid_min, col.valid_max)
+        fill = Table._checked_fill(col)
 
         ds = create_column_dataset(
             group,

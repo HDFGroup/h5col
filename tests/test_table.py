@@ -334,3 +334,66 @@ def test_append_rejects_scalar_values(h5file: h5py.File) -> None:
     t = Table.create(g, [ColumnSpec(name="x", dtype="i4")])
     with pytest.raises(SchemaError):
         t.append({"x": 5})  # not a 1-D sequence
+
+
+# --------------------------------------------------------------------------- #
+# A boolean column declares no fill value, through either entry point
+#
+# H5Col gives booleans no out-of-domain value to spare, so a fill value or a
+# valid range on one is a contradiction rather than a preference. Both paths
+# into column creation must say so.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("fill_value", {"fill_value": False}),
+        ("valid_min", {"valid_min": False}),
+        ("valid_max", {"valid_max": True}),
+    ],
+)
+def test_a_boolean_column_refuses_a_fill_or_a_range_at_create(
+    h5file: h5py.File, label: str, kwargs: Any
+) -> None:
+    spec = ColumnSpec(name="flag", dtype=bool_dtype(), **kwargs)
+    with pytest.raises(SchemaError, match="must not declare"):
+        Table.create(h5file.create_group("t"), [spec])
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("fill_value", {"fill_value": False}),
+        ("valid_min", {"valid_min": False}),
+        ("valid_max", {"valid_max": True}),
+    ],
+)
+def test_a_boolean_column_refuses_a_fill_or_a_range_at_add_column(
+    h5file: h5py.File, label: str, kwargs: Any
+) -> None:
+    table = Table.create(h5file.create_group("t"), [ColumnSpec(name="i", dtype="i8")])
+    with pytest.raises(SchemaError, match="must not declare"):
+        table.add_column(ColumnSpec(name="flag", dtype=bool_dtype(), **kwargs))
+
+
+def test_the_refusal_leaves_no_half_built_table_group(h5file: h5py.File) -> None:
+    # The pre-flight exists so an invalid spec never marks a group as a table.
+    group = h5file.create_group("t")
+    with pytest.raises(SchemaError):
+        Table.create(
+            group,
+            [
+                ColumnSpec(name="ok", dtype="i8"),
+                ColumnSpec(name="flag", dtype=bool_dtype(), fill_value=False),
+            ],
+        )
+    assert not Table.is_table_group(group)
+    assert "ok" not in group
+
+
+def test_a_boolean_column_without_either_is_fine(h5file: h5py.File) -> None:
+    table = Table.create(
+        h5file.create_group("t"), [ColumnSpec(name="flag", dtype=bool_dtype())]
+    )
+    table.append({"flag": [True, False]})
+    table.validate(deep=True)
+    assert table["flag"].fill_value is None
