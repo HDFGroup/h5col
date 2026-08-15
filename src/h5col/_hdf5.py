@@ -32,7 +32,16 @@ CACHE_FRACTION = 0.5  # aim for ~2 chunks resident per dataset
 
 
 def _file_chunk_cache_bytes(group: Any) -> int:
-    """The file's default raw-data chunk cache size (``rdcc_nbytes``), in bytes."""
+    """The file's default raw-data chunk cache size (``rdcc_nbytes``), in bytes.
+
+    Parameters
+    ----------
+    group:
+        Any object in the file of interest. Only its file's access property
+        list is read. Anything that fails to yield a cache size — an object
+        with no reachable file among them — falls back to
+        ``MIN_CHUNK_BYTES``.
+    """
     try:
         return int(group.file.id.get_access_plist().get_cache()[2])
     except Exception:
@@ -387,6 +396,16 @@ def prepare_column_data(dtype: Any, values: Any) -> np.ndarray:
 # Typed attribute helpers
 # --------------------------------------------------------------------------- #
 def _to_str(value: Any) -> str:
+    """Decode an attribute value to ``str``.
+
+    Parameters
+    ----------
+    value:
+        An attribute value as h5py handed it back. A bytes-like one — how a
+        fixed-length string attribute comes back — has its trailing NUL
+        padding stripped and is decoded as UTF-8; anything else goes through
+        ``str``.
+    """
     if isinstance(value, bytes | bytearray | np.bytes_):
         return bytes(value).rstrip(b"\x00").decode("utf-8")
     return str(value)

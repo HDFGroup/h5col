@@ -126,6 +126,17 @@ def from_hdf5plugin(obj: Any) -> Filter:
 
 
 def _coerce(obj: Any) -> Filter:
+    """Return *obj* as a :class:`Filter`, adapting an ``hdf5plugin`` filter.
+
+    Parameters
+    ----------
+    obj:
+        One pipeline entry. A :class:`Filter` is returned unchanged. An
+        ``hdf5plugin`` filter instance goes through :func:`from_hdf5plugin`;
+        it is recognized by having a ``filter_id`` attribute, or by being
+        mapping-like (having ``keys``) with a ``compression`` key. Anything
+        else raises :class:`FilterError`.
+    """
     if isinstance(obj, Filter):
         return obj
     # hdf5plugin filter instance (mapping-like with a filter id).

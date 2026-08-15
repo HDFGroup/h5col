@@ -82,7 +82,17 @@ SUPPORTED_KINDS = frozenset({KIND_CHUNK_MINMAX, KIND_SORTED_ROWS, KIND_BITMAP})
 # Validity tokens
 # --------------------------------------------------------------------------- #
 def _scalar_uint64(attrs: Any, name: str) -> int | None:
-    """Read attribute *name* if it is a scalar uint64; None otherwise."""
+    """Read attribute *name* if it is a scalar uint64; None otherwise.
+
+    Parameters
+    ----------
+    attrs:
+        The attribute collection to read from — an h5py ``AttributeManager``,
+        of a table group or of an index dataset.
+    name:
+        Name of the attribute. Absent, non-scalar, or not uint64 all give None
+        rather than an error, which is what makes this the strict token read.
+    """
     if name not in attrs:
         return None
     val = np.asarray(attrs[name])
@@ -199,6 +209,19 @@ def index_is_valid(index_ds: Any, table_group: Any) -> bool:
 
 
 def _write_tokens(index_ds: Any, generation: int, nrows: int) -> None:
+    """Write the two validity tokens onto one search-index dataset.
+
+    Parameters
+    ----------
+    index_ds:
+        The search-index dataset the tokens are written to.
+    generation:
+        Value for ``SOURCE_GENERATION``. Callers writing after the content pass
+        the table's current ``GENERATION``; callers writing future-valued
+        tokens ahead of the content pass ``g_old + 1``.
+    nrows:
+        Value for ``SOURCE_NROWS``: the row count the content describes.
+    """
     write_uint64_attr(index_ds, ATTR_SOURCE_GENERATION, generation)
     write_uint64_attr(index_ds, ATTR_SOURCE_NROWS, nrows)
 
@@ -411,7 +434,14 @@ def minmax_dtype(element_dtype: Any) -> np.dtype:
 
 
 def _user_fill(dataset: Any) -> Any | None:
-    """The dataset's user-defined fill value, or None when it declares none."""
+    """The dataset's user-defined fill value, or None when it declares none.
+
+    Parameters
+    ----------
+    dataset:
+        Any HDF5 dataset. Its creation property list is what is consulted, so a
+        default (implicit) fill value reads back as None here.
+    """
     if dataset.id.get_create_plist().fill_value_defined() == 2:
         return dataset.fillvalue
     return None
@@ -671,6 +701,22 @@ def compute_bitmap(column_ds: Any, nrows: int) -> tuple[np.ndarray, np.ndarray, 
 def _create_index_dataset(
     si_group: Any, name: str, dtype: np.dtype, length: int
 ) -> Any:
+    """Create a rank-1 index dataset, chunked and unlimited so it can grow.
+
+    Parameters
+    ----------
+    si_group:
+        The table's ``SEARCH_INDEXES`` group, which the dataset is created in.
+    name:
+        Name for the new dataset. The caller has already validated it against
+        the reserved names.
+    dtype:
+        Element datatype of the dataset; its item size decides how many
+        elements fit in the ``INDEX_CHUNK_BYTES`` chunk target.
+    length:
+        Initial number of elements. The one dimension is unlimited, so later
+        maintenance can grow the dataset past this.
+    """
     chunk_len = max(1, INDEX_CHUNK_BYTES // max(1, dtype.itemsize))
     return si_group.create_dataset(
         name, shape=(length,), maxshape=(None,), chunks=(chunk_len,), dtype=dtype
@@ -682,6 +728,14 @@ def _entries_fit(index_ds: Any, n_entries: int) -> bool:
 
     A foreign index dataset need not be resizable (chunked + unlimited is only
     a SHOULD); one that cannot fit the new entry count cannot be maintained.
+
+    Parameters
+    ----------
+    index_ds:
+        The existing index dataset a rebuild wants to write into.
+    n_entries:
+        Number of entries the rebuilt content needs room for. Only the first
+        dimension is considered, so this suits the rank-1 families.
     """
     if index_ds.shape[0] >= n_entries:
         return True
@@ -696,6 +750,15 @@ def _write_entries(index_ds: Any, entries: np.ndarray) -> None:
 
     Never shrinks: entries beyond the data-bearing chunk count are permitted
     tail residue that consumers ignore (spec, "How consumers interpret NROWS").
+
+    Parameters
+    ----------
+    index_ds:
+        The index dataset written into, resized first when it is too short.
+    entries:
+        The recomputed content, written to positions ``[0, len(entries))``. Its
+        datatype is not checked here: the caller establishes the fit with
+        :func:`_index_content_fits` first.
     """
     n = len(entries)
     if index_ds.shape[0] < n:
@@ -707,7 +770,26 @@ def _write_entries(index_ds: Any, entries: np.ndarray) -> None:
 def _create_bitmap_datasets(
     si_group: Any, name: str, element_dtype: Any, k: int, n_bytes: int
 ) -> tuple[Any, Any]:
-    """Create the bitmap matrix and its accompanying values dataset."""
+    """Create the bitmap matrix and its accompanying values dataset.
+
+    Parameters
+    ----------
+    si_group:
+        The table's ``SEARCH_INDEXES`` group, which both datasets are created
+        in.
+    name:
+        Name for the bitmap dataset. The values dataset is created beside it as
+        ``<name>_values``; the caller has already validated both names.
+    element_dtype:
+        Datatype of the values dataset, which is the source column's; its item
+        size decides that dataset's chunk length.
+    k:
+        The number of enumerated values: the bitmap's first dimension and the
+        values dataset's length.
+    n_bytes:
+        Bytes per bitmap row, ``ceil(nrows / 8)``, the bitmap's second
+        dimension. Both bitmap dimensions are unlimited.
+    """
     values_len = max(1, INDEX_CHUNK_BYTES // max(1, np.dtype(element_dtype).itemsize))
     values_ds = si_group.create_dataset(
         f"{name}_values",
@@ -734,6 +816,15 @@ def _exactly_resizable(dataset: Any, shape: tuple[int, ...]) -> bool:
     so stale residue rows would masquerade as indexed values. Rebuilds
     therefore resize to the exact shape, which requires a chunked dataset (or
     one that already matches).
+
+    Parameters
+    ----------
+    dataset:
+        The existing dataset a rebuild wants to write into. Nothing is resized
+        here; this only reports whether the resize would be possible.
+    shape:
+        The exact shape the rebuilt content needs. A rank differing from the
+        dataset's is False, since no resize can reconcile the two.
     """
     if dataset.shape == shape:
         return True
@@ -994,7 +1085,20 @@ def create_bitmap(
 # Rebuild machinery shared by refresh and mutation maintenance
 # --------------------------------------------------------------------------- #
 def _compute_index_content(kind: str, column_ds: Any, nrows: int) -> Any:
-    """Recompute the content of one index (read-only, never touches tokens)."""
+    """Recompute the content of one index (read-only, never touches tokens).
+
+    Parameters
+    ----------
+    kind:
+        The index's ``KIND`` value, which selects the family and so the shape
+        of the result. A kind this implementation does not build raises
+        ``SchemaError``.
+    column_ds:
+        The column dataset the content is derived from.
+    nrows:
+        The row count to compute against; rows at or above it are reserved
+        storage and are not indexed.
+    """
     if kind == KIND_CHUNK_MINMAX:
         return compute_chunk_minmax(column_ds, nrows)
     if kind == KIND_SORTED_ROWS:
@@ -1010,6 +1114,15 @@ def _minmax_dtype_compatible(index_dtype: np.dtype, column_dtype: Any) -> bool:
     Writing into a mismatched foreign compound would let HDF5 silently
     convert the ``min``/``max`` fields — clamping an int64 bound into an
     int32 field, say — and stamp the corrupted bounds valid.
+
+    Parameters
+    ----------
+    index_dtype:
+        The existing index dataset's compound dtype. Its field names must be
+        ``MINMAX_FIELDS`` in that order, and the three counter fields uint64.
+    column_dtype:
+        The source column's element dtype, which the ``min`` and ``max`` fields
+        are compared against through :func:`_same_element_dtype`.
     """
     if index_dtype.names != MINMAX_FIELDS:
         return False
@@ -1036,6 +1149,27 @@ def _index_content_fits(
     a SHOULD), may be too narrow to address every row, hold a datatype the
     content cannot be written into losslessly, or lack a usable values
     dataset; such an index cannot be maintained and is left untouched.
+
+    Parameters
+    ----------
+    kind:
+        The index's ``KIND`` value, which selects the checks that apply. Any
+        kind outside the three supported families is False.
+    table_group:
+        The table's HDF5 group, used only to resolve a ``BITMAP`` index's
+        ``VALUES`` reference.
+    index_ds:
+        The existing index dataset the content would be written into.
+    column_ds:
+        The column the index covers, whose datatype the index's element or
+        field datatype has to match.
+    content:
+        The recomputed content from :func:`_compute_index_content`, in whatever
+        shape that kind returns.
+    nrows:
+        The row count the content was computed for. It matters for
+        ``SORTED_ROWS``, whose datatype must be able to address ``nrows - 1``
+        and whose extent must reach ``nrows``.
     """
     if kind == KIND_CHUNK_MINMAX:
         return (
@@ -1070,7 +1204,24 @@ def _index_content_fits(
 def _write_index_content(
     kind: str, table_group: Any, index_ds: Any, content: Any
 ) -> None:
-    """Write recomputed *content* into *index_ds* (fit already verified)."""
+    """Write recomputed *content* into *index_ds* (fit already verified).
+
+    Parameters
+    ----------
+    kind:
+        The index's ``KIND`` value, which selects the family. A kind this
+        implementation does not build raises ``SchemaError``.
+    table_group:
+        The table's HDF5 group, used only to resolve a ``BITMAP`` index's
+        ``VALUES`` reference.
+    index_ds:
+        The index dataset written to, along with the family's semantic
+        attributes (the ``SORTED_ROWS`` tail lengths, ``ORDERED``,
+        ``EXHAUSTIVE``). The validity tokens are not touched here.
+    content:
+        The recomputed content from :func:`_compute_index_content` for this
+        kind, which the caller has already confirmed fits.
+    """
     if kind == KIND_CHUNK_MINMAX:
         _write_entries(index_ds, content)
         return
@@ -1112,6 +1263,28 @@ def _refresh_one(
     Returns False — leaving the index entirely untouched, tokens included —
     when this producer cannot rebuild it (unsupported kind, unsupported
     element dtype, or content that does not fit the existing datasets).
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group. Used only to resolve a ``BITMAP`` index's
+        ``VALUES`` reference while checking the fit and writing the content;
+        its ``GENERATION`` and ``NROWS`` attributes are not read here.
+    index_ds:
+        The index dataset to rebuild. Its ``KIND`` selects the family, and both
+        the recomputed content and the validity tokens are written to it.
+    column_ds:
+        The column dataset the index covers. Its data is what the content is
+        recomputed from, and its element dtype decides whether this producer
+        can rebuild the index at all.
+    nrows:
+        The table's committed row count to rebuild against, also written as the
+        ``SOURCE_NROWS`` token. The caller reads it from the table group and
+        passes it in, so a batch refresh reads it once for every index.
+    generation:
+        The table's current ``GENERATION``, written as the ``SOURCE_GENERATION``
+        token once the content is in place. Together with *nrows* it is what
+        makes the rebuilt index pass the validity check.
     """
     kind = index_kind(index_ds)
     if kind not in SUPPORTED_KINDS or not supported_index_dtype(column_ds.dtype):
@@ -1262,6 +1435,19 @@ def refresh_all_indexes(table_group: Any) -> int:
 # Validation (consistency rules 3, 4, 9, 12)
 # --------------------------------------------------------------------------- #
 def _require_scalar_uint64(obj: Any, attr: str, what: str) -> None:
+    """Require *attr* on *obj* to be present and a scalar uint64 (rule 12).
+
+    Parameters
+    ----------
+    obj:
+        The HDF5 object carrying the attribute — a table group or an index
+        dataset.
+    attr:
+        Name of the attribute. It also appears in the error messages.
+    what:
+        How the object is named in the error message, such as ``"table group"``
+        or ``"index 'x__bitmap'"``. Used only to make the message specific.
+    """
     if attr not in obj.attrs:
         raise ConformanceError(f"{what} has no {attr} attribute")
     val = np.asarray(obj.attrs[attr])
@@ -1278,6 +1464,20 @@ def _require_bool_attr(
 
     Accepts any enumeration whose base is a one-byte integer of either
     signedness with members exactly ``FALSE = 0`` and ``TRUE = 1``.
+
+    Parameters
+    ----------
+    obj:
+        The HDF5 object carrying the attribute.
+    attr:
+        Name of the attribute. It also appears in the error messages.
+    what:
+        How the object is named in the error message, such as
+        ``"SORTED_ROWS 'x__sorted_rows'"``. Used only to make the message
+        specific.
+    must_be_true:
+        When True, a well-formed attribute holding false is a violation too.
+        When False, only the attribute's presence and datatype are checked.
     """
     if attr not in obj.attrs:
         raise ConformanceError(f"{what} has no {attr} attribute")
@@ -1300,7 +1500,17 @@ def _require_bool_attr(
 
 
 def _require_kind_attr(obj: Any, name: str) -> None:
-    """``KIND`` MUST be a scalar fixed-length ASCII string attribute."""
+    """``KIND`` MUST be a scalar fixed-length ASCII string attribute.
+
+    Parameters
+    ----------
+    obj:
+        The search-index dataset. It must already carry ``KIND``: the caller
+        checks that, and a missing attribute raises ``KeyError`` here.
+    name:
+        The index dataset's name, used only to make the error messages
+        specific.
+    """
     if np.asarray(obj.attrs[ATTR_KIND]).shape != ():
         raise ConformanceError(f"search index {name!r} KIND must be a scalar attribute")
     tid = obj.attrs.get_id(ATTR_KIND).get_type()
@@ -1320,6 +1530,15 @@ def _same_element_dtype(field_dtype: np.dtype, column_dtype: np.dtype) -> bool:
     h5py normalizes the H5Col boolean enum to NumPy ``bool`` when reading a
     compound field, so an exact dtype comparison would wrongly reject a
     conformant boolean min/max field.
+
+    Parameters
+    ----------
+    field_dtype:
+        The dtype of the index's ``min`` or ``max`` compound field, as h5py
+        reports it on read.
+    column_dtype:
+        The source column's element dtype. The comparison is symmetric — the
+        two names only say where each side comes from.
     """
     from .booleans import is_bool_dtype
 
@@ -1331,7 +1550,23 @@ def _same_element_dtype(field_dtype: np.dtype, column_dtype: np.dtype) -> bool:
 def _validate_minmax_structure(
     index_ds: Any, column_ds: Any, nrows: int, name: str
 ) -> None:
-    """Cheap structural checks of a *valid* ``CHUNK_MINMAX`` dataset (rule 9)."""
+    """Cheap structural checks of a *valid* ``CHUNK_MINMAX`` dataset (rule 9).
+
+    Parameters
+    ----------
+    index_ds:
+        The ``CHUNK_MINMAX`` dataset to check. Only its ``n`` field is read;
+        the stored bounds are left to the deep check.
+    column_ds:
+        The column the index covers. Its datatype and chunk layout are read,
+        its data is not.
+    nrows:
+        The table's committed row count, from which the expected chunk count
+        and per-chunk ``n`` values are derived.
+    name:
+        The index dataset's name, used only to make the error messages
+        specific.
+    """
     if index_ds.ndim != 1:
         raise ConformanceError(f"CHUNK_MINMAX {name!r} must be 1-D")
     if not is_orderable(column_ds.dtype):
@@ -1376,7 +1611,17 @@ def _validate_minmax_structure(
 
 
 def _minmax_entries_equal(a: np.ndarray, b: np.ndarray) -> bool:
-    """Field-wise equality of two entry arrays, with NaN == NaN for floats."""
+    """Field-wise equality of two entry arrays, with NaN == NaN for floats.
+
+    Parameters
+    ----------
+    a:
+        One array of ``CHUNK_MINMAX`` entries, which must carry every field in
+        ``MINMAX_FIELDS``.
+    b:
+        The other array, under the same requirement. Differing lengths simply
+        compare unequal.
+    """
     for field in MINMAX_FIELDS:
         fa, fb = a[field], b[field]
         if fa.dtype.kind == "f":
@@ -1393,6 +1638,21 @@ def _validate_sorted_rows_structure(
     """Structural rule-9 checks of a *valid* ``SORTED_ROWS`` dataset.
 
     Reads the permutation (it is the index) but never the column data.
+
+    Parameters
+    ----------
+    index_ds:
+        The ``SORTED_ROWS`` dataset to check, together with its tail-length and
+        ``ORDERED`` attributes.
+    column_ds:
+        The column the index covers. Only its datatype is examined.
+    nrows:
+        The table's committed row count. The stored permutation must cover
+        exactly ``[0, nrows)``, the index datatype must be able to address
+        ``nrows - 1``, and the two tail lengths must not exceed it.
+    name:
+        The index dataset's name, used only to make the error messages
+        specific.
     """
     if index_ds.ndim != 1:
         raise ConformanceError(f"SORTED_ROWS {name!r} must be 1-D")
@@ -1444,7 +1704,27 @@ def _validate_sorted_rows_structure(
 def _validate_bitmap_structure(
     table_group: Any, index_ds: Any, column_ds: Any, nrows: int, name: str
 ) -> None:
-    """Structural rule-9 checks of a *valid* ``BITMAP`` dataset."""
+    """Structural rule-9 checks of a *valid* ``BITMAP`` dataset.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, against which the ``VALUES`` reference is
+        resolved and its target's placement under ``SEARCH_INDEXES`` checked.
+    index_ds:
+        The ``BITMAP`` dataset to check, together with its ``VALUES``,
+        ``ORDERED``, and ``EXHAUSTIVE`` attributes. Of its content only the
+        final data byte is read, for the padding-bit check.
+    column_ds:
+        The column the index covers, whose HDF5 datatype the values dataset
+        must equal.
+    nrows:
+        The table's committed row count, which sets the required row width
+        ``ceil(nrows / 8)`` and which bit positions count as padding.
+    name:
+        The index dataset's name, used only to make the error messages
+        specific.
+    """
     if index_ds.ndim != 2:
         raise ConformanceError(f"BITMAP {name!r} must be 2-D")
     if index_ds.dtype != np.uint8:
@@ -1517,7 +1797,27 @@ def _validate_bitmap_structure(
 def _deep_check_bitmap(
     table_group: Any, index_ds: Any, column_ds: Any, nrows: int, name: str
 ) -> None:
-    """Semantic rule-9 check: the stored bits describe the column exactly."""
+    """Semantic rule-9 check: the stored bits describe the column exactly.
+
+    Parameters
+    ----------
+    table_group:
+        The table's HDF5 group, against which the bitmap's ``VALUES`` reference
+        is resolved.
+    index_ds:
+        The ``BITMAP`` dataset whose stored bits are compared against bits
+        packed afresh from the column, and whose ``EXHAUSTIVE`` claim is
+        checked when it is set.
+    column_ds:
+        The column the index covers. Rows ``[0, nrows)`` are read and compared
+        against every enumerated value.
+    nrows:
+        The table's committed row count; rows at or above it are reserved
+        storage and are not indexed.
+    name:
+        The index dataset's name, used only to make the error messages
+        specific.
+    """
     values_ds = bitmap_values_dataset(table_group, index_ds)
     if values_ds is None:  # unreachable after _validate_bitmap_structure
         raise ConformanceError(f"BITMAP {name!r} has no usable values dataset")

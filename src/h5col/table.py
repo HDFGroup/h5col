@@ -263,7 +263,19 @@ class Table:
 
     @staticmethod
     def _validate_column_spec(col: ColumnSpec | ListColumnSpec) -> None:
-        """Validate one column spec without touching the file."""
+        """Validate one column spec without touching the file.
+
+        Parameters
+        ----------
+        col:
+            The column spec to check, left unmodified. Its extra attribute
+            names are checked first either way; a
+            :class:`~h5col.specs.ListColumnSpec` is then handed to
+            :func:`~h5col.lists.validate_list_column_spec` and nothing below
+            applies to it. A :class:`~h5col.specs.ColumnSpec` is checked here
+            for a legal column name and for a fill value consistent with the
+            column's kind: categorical, boolean, or plain.
+        """
         validate_attribute_names(col.attributes, col.name)
         if isinstance(col, ListColumnSpec):
             lists.validate_list_column_spec(col)
@@ -324,6 +336,24 @@ class Table:
         col: ColumnSpec | ListColumnSpec,
         default_chunk_bytes: int | None = None,
     ) -> Any:
+        """Create one column from its spec and return the new HDF5 object.
+
+        Parameters
+        ----------
+        group:
+            The table group to create the column in. It is only passed on to
+            the creation helpers; nothing is read from it here.
+        col:
+            The column's spec. A :class:`~h5col.specs.ListColumnSpec` is handed
+            to :func:`~h5col.lists.create_list_column` and none of the scalar
+            handling below applies to it. A categorical
+            :class:`~h5col.specs.ColumnSpec` goes to
+            :meth:`_create_categorical_column`. Any other one supplies the
+            dtype, chunking, filters, fill value, and the optional attributes
+            written on the dataset.
+        default_chunk_bytes:
+            A byte target for one chunk, used only when ``col.chunks`` is None.
+        """
         if isinstance(col, ListColumnSpec):
             return lists.create_list_column(
                 group, col, default_chunk_bytes=default_chunk_bytes
@@ -386,6 +416,29 @@ class Table:
         dtype: np.dtype,
         default_chunk_bytes: int | None = None,
     ) -> Any:
+        """Create a categorical column and its companion categories dataset.
+
+        Parameters
+        ----------
+        group:
+            The table group to create the column dataset in. Its
+            ``CATEGORIES`` child group is required (created if absent) to hold
+            the labels.
+        col:
+            The categorical column's spec. ``col.categories`` must not be
+            None, which the caller has already ensured. Supplies the fill
+            value, chunking, filters, and the optional attributes written on
+            the dataset.
+        name:
+            The dataset's link name within *group*, already validated by the
+            caller. The categories dataset is named ``f"{name}__CATEGORIES"``.
+        dtype:
+            The integer code dtype. The fill value and any ``valid_min`` /
+            ``valid_max`` are cast to it.
+        default_chunk_bytes:
+            An explicit byte target for one chunk, used only when
+            ``col.chunks`` is None.
+        """
         assert col.categories is not None
         # Fill range, dtype fit, and representability are enforced by
         # _validate_column_spec, which always runs before creation.
@@ -593,6 +646,16 @@ class Table:
         }
 
     def _wrap(self, obj: Any) -> Column | ListColumn:
+        """Wrap a discovered column object in its column class.
+
+        Parameters
+        ----------
+        obj:
+            One of the objects found by :meth:`_discover_columns`. An h5py
+            dataset becomes a :class:`~h5col.Column`; anything else is taken
+            to be a list column group and becomes a
+            :class:`~h5col.ListColumn`. That is not re-checked here.
+        """
         if isinstance(obj, h5py.Dataset):
             return Column(obj, self)
         return ListColumn(obj, self)
@@ -1337,12 +1400,34 @@ class Table:
 
 
 def _looks_boolean(dataset: Any) -> bool:
+    """Return True if *dataset* holds an H5Col boolean column.
+
+    Parameters
+    ----------
+    dataset:
+        An open column dataset. Only its ``dtype`` is read, and the decision
+        rests entirely with :func:`~h5col.booleans.is_bool_dtype`.
+    """
     from .booleans import is_bool_dtype
 
     return is_bool_dtype(dataset.dtype)
 
 
 def _infer_column_spec(name: str, arr: Any) -> ColumnSpec:
+    """Derive a :class:`~h5col.ColumnSpec` for *name* from the values in *arr*.
+
+    Parameters
+    ----------
+    name:
+        The name the returned spec carries. It is used for nothing else here
+        and is not validated; :meth:`Table.create` checks it later.
+    arr:
+        The column's values, read through ``np.asarray``. A boolean array
+        gives the H5Col boolean dtype. Strings and bytes — including an object
+        array whose values are all ``str`` or ``bytes`` — give a fixed-length
+        string sized to the longest value in UTF-8 bytes, and at least one
+        byte wide. Anything else keeps the array's own dtype.
+    """
     a = np.asarray(arr)
     if a.dtype.kind == "b":
         return ColumnSpec(name=name, dtype=bool_dtype())

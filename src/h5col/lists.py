@@ -113,6 +113,16 @@ def validate_list_column_spec(spec: ListColumnSpec) -> None:
 
 
 def _validate_values_spec(vs: Any) -> None:
+    """Validate one ``values`` spec, descending through nested list levels.
+
+    Parameters
+    ----------
+    vs:
+        The spec for a ``VALUES`` member: a :class:`~h5col.specs.LeafValuesSpec`,
+        a :class:`~h5col.specs.StringValuesSpec` (nothing to check) or a
+        :class:`~h5col.specs.NestedListSpec`, which is recursed into so that one
+        call covers a whole ``values`` tree. Anything else raises.
+    """
     if isinstance(vs, LeafValuesSpec):
         dtype = vs.resolved_dtype()
         reject_vlen(dtype)
@@ -140,6 +150,21 @@ def _validate_values_spec(vs: Any) -> None:
 def _create_offsets(
     group: Any, chunks: int | None, filters: Any, *, default_chunk_bytes: int | None
 ) -> Any:
+    """Create a level's ``OFFSETS`` dataset, already holding its leading 0.
+
+    Parameters
+    ----------
+    group:
+        The list column level, or ``STRING_VALUES`` group, to create the
+        ``OFFSETS`` dataset in.
+    chunks:
+        Rows per chunk, or ``None`` to leave the chunk size to
+        *default_chunk_bytes*.
+    filters:
+        The filter pipeline for this dataset, or ``None`` for an unfiltered one.
+    default_chunk_bytes:
+        A byte target for one chunk, used only when *chunks* is ``None``.
+    """
     ds = create_column_dataset(
         group,
         MEMBER_OFFSETS,
@@ -155,6 +180,17 @@ def _create_offsets(
 
 
 def _create_mask(group: Any, *, default_chunk_bytes: int | None) -> Any:
+    """Create a level's ``MASK`` dataset, empty and with no fill value.
+
+    Parameters
+    ----------
+    group:
+        The list column level, or ``STRING_VALUES`` group, to create the
+        ``MASK`` dataset in.
+    default_chunk_bytes:
+        A byte target for one chunk. The dataset asks for no explicit chunk
+        size of its own, so this is what sizes it.
+    """
     return create_column_dataset(
         group,
         MEMBER_MASK,
@@ -167,6 +203,21 @@ def _create_mask(group: Any, *, default_chunk_bytes: int | None) -> Any:
 def _create_leaf(
     parent: Any, leaf: LeafValuesSpec, *, default_chunk_bytes: int | None
 ) -> Any:
+    """Create a leaf ``VALUES`` dataset and write its descriptive attributes.
+
+    Parameters
+    ----------
+    parent:
+        The list column level to create the ``VALUES`` dataset in.
+    leaf:
+        The leaf spec. Its dtype is rejected if variable-length; its chunks,
+        filters, fill value and valid range go to the dataset, and its units,
+        units vocabulary and description are written as attributes. A boolean
+        leaf gets no fill value.
+    default_chunk_bytes:
+        A byte target for one chunk, used only when the spec sets no
+        ``chunks``.
+    """
     dtype = leaf.resolved_dtype()
     reject_vlen(dtype)
     if leaf.is_boolean:
@@ -201,6 +252,20 @@ def _create_leaf(
 def _create_string_values(
     parent: Any, sv: StringValuesSpec, *, default_chunk_bytes: int | None
 ) -> Any:
+    """Create a ``STRING_VALUES`` member with its ``OFFSETS`` and ``CHARS``.
+
+    Parameters
+    ----------
+    parent:
+        The list column level to create the ``VALUES`` group in.
+    sv:
+        The string values spec. Its ``chunks`` sizes both ``OFFSETS`` and
+        ``CHARS``, its ``filters`` apply to ``CHARS`` alone, and ``nullable``
+        adds a ``MASK``.
+    default_chunk_bytes:
+        A byte target for one chunk, used only when the spec sets no
+        ``chunks``.
+    """
     g = parent.create_group(MEMBER_VALUES)
     write_ascii_token_attr(g, ATTR_CLASS, CLASS_STRING_VALUES)
     _create_offsets(g, sv.chunks, None, default_chunk_bytes=default_chunk_bytes)
@@ -221,6 +286,20 @@ def _create_string_values(
 def _create_values(
     parent: Any, values_spec: Any, *, default_chunk_bytes: int | None
 ) -> None:
+    """Create the ``VALUES`` member of a list level, whichever kind it is.
+
+    Parameters
+    ----------
+    parent:
+        The list column level to create the ``VALUES`` member in.
+    values_spec:
+        The spec deciding what ``VALUES`` becomes: a leaf dataset, a
+        ``STRING_VALUES`` group, or a nested ``LIST_COLUMN`` group whose own
+        level is then created recursively. Anything else raises.
+    default_chunk_bytes:
+        A byte target for one chunk, passed down to every dataset created
+        below *parent*.
+    """
     if isinstance(values_spec, LeafValuesSpec):
         _create_leaf(parent, values_spec, default_chunk_bytes=default_chunk_bytes)
     elif isinstance(values_spec, StringValuesSpec):
@@ -252,6 +331,26 @@ def _create_list_level(
     *,
     default_chunk_bytes: int | None,
 ) -> None:
+    """Fill an existing group with one list level: ``OFFSETS``, ``MASK``, ``VALUES``.
+
+    Parameters
+    ----------
+    group:
+        The group to fill. Its ``CLASS`` and ``KIND`` attributes are written by
+        the caller, not here.
+    values_spec:
+        The spec for this level's ``VALUES`` member.
+    nullable:
+        Whether this level gets a ``MASK``, which is what allows a null entry
+        to be told apart from an empty one.
+    chunks:
+        Rows per chunk for this level's ``OFFSETS``.
+    filters:
+        The filter pipeline for this level's ``OFFSETS``.
+    default_chunk_bytes:
+        A byte target for one chunk, used wherever no explicit ``chunks`` is
+        set.
+    """
     _create_offsets(group, chunks, filters, default_chunk_bytes=default_chunk_bytes)
     if nullable:
         _create_mask(group, default_chunk_bytes=default_chunk_bytes)
@@ -317,6 +416,20 @@ class _LevelData:
 
 
 def _encode_level(level_group: Any, entries: list[Any]) -> _LevelData:
+    """Encode *entries* for one list level into a plan the writer can apply.
+
+    Parameters
+    ----------
+    level_group:
+        The list column level the entries are destined for. It is only read
+        here: whether it has a ``MASK`` decides if null entries are allowed,
+        its ``VALUES`` member decides how the flattened elements are encoded,
+        and its name goes into the error message.
+    entries:
+        One entry per row: an iterable of elements, or ``None`` for a null
+        entry, which is allowed only when the level has a ``MASK``. A null
+        entry contributes no elements and a count of 0.
+    """
     nullable = MEMBER_MASK in level_group
     counts: list[int] = []
     mask: list[bool] | None = [] if nullable else None
@@ -341,6 +454,17 @@ def _encode_level(level_group: Any, entries: list[Any]) -> _LevelData:
 
 
 def _encode_values(obj: Any, entries: list[Any]) -> Any:
+    """Encode elements for a ``VALUES`` member, dispatching on what it is.
+
+    Parameters
+    ----------
+    obj:
+        The ``VALUES`` member the elements are destined for: a leaf dataset, or
+        a group whose ``CLASS`` is ``STRING_VALUES`` or ``LIST_COLUMN``. Any
+        other ``CLASS`` raises.
+    entries:
+        The elements to encode, already flattened by the enclosing level.
+    """
     if isinstance(obj, h5py.Dataset):
         return _encode_leaf(obj, entries)
     cls = read_str_attr(obj, ATTR_CLASS)
@@ -352,6 +476,19 @@ def _encode_values(obj: Any, entries: list[Any]) -> Any:
 
 
 def _encode_leaf(ds: Any, entries: list[Any]) -> _LeafData:
+    """Encode *entries* into one array of the leaf dataset's datatype.
+
+    Parameters
+    ----------
+    ds:
+        The leaf ``VALUES`` dataset. Only its datatype and fill value are read;
+        nothing is written to it here.
+    entries:
+        The elements to encode. ``None`` means a missing element and becomes
+        the dataset's fill value. It is rejected for a boolean leaf, and for
+        any other leaf that declares no fill value — except a fixed-length
+        string leaf, which falls back to empty bytes.
+    """
     dtype = ds.dtype
     if is_bool_dtype(dtype):
         if any(v is None for v in entries):
@@ -377,6 +514,20 @@ def _encode_leaf(ds: Any, entries: list[Any]) -> _LeafData:
 
 
 def _encode_string(sv_group: Any, entries: list[Any]) -> _StringData:
+    """Encode *entries* into one UTF-8 buffer plus per-element byte counts.
+
+    Parameters
+    ----------
+    sv_group:
+        The ``STRING_VALUES`` group the elements are destined for. It is only
+        read here: whether it has a ``MASK`` decides if null elements are
+        allowed, and its name goes into the error message.
+    entries:
+        The string elements to encode. A :class:`str` is encoded as UTF-8,
+        anything else is taken as bytes. ``None`` marks a null element, which
+        is allowed only when the group has a ``MASK``, and contributes no
+        bytes.
+    """
     nullable = MEMBER_MASK in sv_group
     byte_counts: list[int] = []
     mask: list[bool] | None = [] if nullable else None
@@ -402,6 +553,24 @@ def _encode_string(sv_group: Any, entries: list[Any]) -> _StringData:
 # Writing (leaf-first) a plan into the file's reserved tail
 # --------------------------------------------------------------------------- #
 def _write_level(level_group: Any, data: _LevelData, cur_count: int) -> None:
+    """Write one level's plan into the file, leaf-first.
+
+    The child elements go down first, then this level's ``MASK``, and its
+    ``OFFSETS`` last, so the entries already committed stay fully described at
+    every moment.
+
+    Parameters
+    ----------
+    level_group:
+        The list column level to write into. Its ``VALUES``, ``MASK`` and
+        ``OFFSETS`` are extended as needed.
+    data:
+        The plan for this level, as produced by :func:`_encode_level`.
+    cur_count:
+        How many entries this level already holds. The new entries begin
+        there, and ``OFFSETS[cur_count]`` says where their elements begin in
+        the child.
+    """
     offs = level_group[MEMBER_OFFSETS]
     base = int(offs[cur_count])
     k = len(data.counts)
@@ -421,6 +590,20 @@ def _write_level(level_group: Any, data: _LevelData, cur_count: int) -> None:
 
 
 def _write_values(obj: Any, data: Any, cur_count: int) -> None:
+    """Write a ``VALUES`` plan, dispatching on which kind of plan *data* is.
+
+    Parameters
+    ----------
+    obj:
+        The ``VALUES`` member to write into, matching *data*: a leaf dataset, a
+        ``STRING_VALUES`` group, or a nested list level. It is extended as
+        needed.
+    data:
+        The plan for that member. A plan of no recognized kind writes nothing.
+    cur_count:
+        Where in *obj* the write begins: the element count already stored,
+        which the enclosing level takes from its own ``OFFSETS``.
+    """
     if isinstance(data, _LeafData):
         n = int(data.array.shape[0])
         extend_to(obj, cur_count + n)
@@ -433,6 +616,20 @@ def _write_values(obj: Any, data: Any, cur_count: int) -> None:
 
 
 def _write_string(sv_group: Any, data: _StringData, cur_count: int) -> None:
+    """Write a string plan into a ``STRING_VALUES`` group, characters first.
+
+    Parameters
+    ----------
+    sv_group:
+        The ``STRING_VALUES`` group to write into. Its ``CHARS``, ``MASK`` and
+        ``OFFSETS`` are extended as needed, in that order.
+    data:
+        The plan for these elements, as produced by :func:`_encode_string`.
+    cur_count:
+        How many elements the group already holds. The new elements begin
+        there, and ``OFFSETS[cur_count]`` says where their bytes begin in
+        ``CHARS``.
+    """
     svoffs = sv_group[MEMBER_OFFSETS]
     chars = sv_group[MEMBER_CHARS]
     base = int(svoffs[cur_count])
@@ -519,6 +716,20 @@ def read_list_column(level_group: Any, count: int, *, start: int = 0) -> list[An
 
 
 def _read_values(obj: Any, count: int, *, start: int = 0) -> list[Any]:
+    """Read *count* elements from a ``VALUES`` member, whichever kind it is.
+
+    Parameters
+    ----------
+    obj:
+        The ``VALUES`` member to read from: a leaf dataset, or a group whose
+        ``CLASS`` is ``STRING_VALUES`` or ``LIST_COLUMN``. Any other ``CLASS``
+        raises.
+    count:
+        How many elements to read.
+    start:
+        The first element to read, as an absolute position in *obj* — offsets
+        are absolute, so this is what the enclosing level rebases against.
+    """
     if isinstance(obj, h5py.Dataset):
         return _read_leaf(obj, count, start=start)
     cls = read_str_attr(obj, ATTR_CLASS)
@@ -530,6 +741,19 @@ def _read_values(obj: Any, count: int, *, start: int = 0) -> list[Any]:
 
 
 def _read_leaf(ds: Any, count: int, *, start: int = 0) -> list[Any]:
+    """Read *count* leaf elements, turning fill values back into ``None``.
+
+    Parameters
+    ----------
+    ds:
+        The leaf ``VALUES`` dataset. Its datatype decides the decoding, and its
+        fill value, when it declares one, decides which elements come back as
+        ``None``.
+    count:
+        How many elements to read.
+    start:
+        The first element to read. Defaults to 0.
+    """
     raw = ds[start : start + count]
     dtype = ds.dtype
     if is_bool_dtype(dtype):
@@ -548,6 +772,20 @@ def _read_leaf(ds: Any, count: int, *, start: int = 0) -> list[Any]:
 
 
 def _read_string(sv_group: Any, count: int, *, start: int = 0) -> list[Any]:
+    """Read *count* UTF-8 strings from a ``STRING_VALUES`` group.
+
+    Parameters
+    ----------
+    sv_group:
+        The ``STRING_VALUES`` group to read from. Only the span of ``CHARS``
+        the wanted elements cover is read, and a ``MASK``, when present, says
+        which of them come back as ``None``.
+    count:
+        How many elements to read. Zero or fewer reads nothing and touches no
+        dataset.
+    start:
+        The first element to read. Defaults to 0.
+    """
     if count <= 0:
         return []
     offs = sv_group[MEMBER_OFFSETS][start : start + count + 1]
@@ -613,6 +851,21 @@ def validate_list_column(level_group: Any, count: int) -> None:
 
 
 def _check_offsets(ds: Any, count: int, where: str) -> None:
+    """Check one ``OFFSETS`` dataset against the H5Col rules for it.
+
+    Parameters
+    ----------
+    ds:
+        The dataset to check. It must be rank-1 and uint64, extend to at least
+        ``count + 1``, start at 0 and never decrease.
+    count:
+        How many entries the enclosing level holds. The first ``count + 1``
+        offsets describe them and are the only ones looked at; anything in the
+        reserved tail above them is left alone.
+    where:
+        The name of the group holding *ds*, used only to make the error
+        messages specific.
+    """
     if not isinstance(ds, h5py.Dataset) or ds.ndim != 1:
         raise ConformanceError(f"{where!r}/OFFSETS must be a rank-1 dataset")
     if not (ds.dtype.kind == "u" and ds.dtype.itemsize == 8):
@@ -631,6 +884,23 @@ def _check_offsets(ds: Any, count: int, where: str) -> None:
 
 
 def _check_mask_and_nulls(m: Any, offs: Any, count: int, where: str) -> None:
+    """Check a ``MASK`` dataset, and that every null entry spans no elements.
+
+    Parameters
+    ----------
+    m:
+        The ``MASK`` dataset to check. It must be rank-1, of the H5Col boolean
+        datatype, and extend to at least *count*.
+    offs:
+        The sibling ``OFFSETS`` dataset, read to confirm that a false mask
+        entry has an empty span. Its own validity is checked elsewhere.
+    count:
+        How many entries to check. Zero returns at once, without reading
+        either dataset.
+    where:
+        The name of the group holding *m*, used only to make the error
+        messages specific.
+    """
     if not isinstance(m, h5py.Dataset) or m.ndim != 1:
         raise ConformanceError(f"{where!r}/MASK must be a rank-1 dataset")
     if not is_bool_dtype(m.dtype):
@@ -651,6 +921,19 @@ def _check_mask_and_nulls(m: Any, offs: Any, count: int, where: str) -> None:
 
 
 def _validate_values(obj: Any, count: int) -> None:
+    """Validate a ``VALUES`` member, descending into a nested one.
+
+    Parameters
+    ----------
+    obj:
+        The ``VALUES`` member to validate: a leaf dataset, which must be
+        rank-1, free of variable-length datatypes and long enough, or a group
+        whose ``CLASS`` is ``STRING_VALUES`` or ``LIST_COLUMN``. Any other
+        ``CLASS`` raises.
+    count:
+        How many elements this member is expected to hold, which its extent is
+        checked against.
+    """
     if isinstance(obj, h5py.Dataset):
         try:
             reject_vlen(obj.dtype)  # rule 11
@@ -676,6 +959,19 @@ def _validate_values(obj: Any, count: int) -> None:
 
 
 def _validate_string_values(g: Any, count: int) -> None:
+    """Validate a ``STRING_VALUES`` group and its members.
+
+    Parameters
+    ----------
+    g:
+        The group to check. It may hold nothing beyond ``OFFSETS``, ``CHARS``
+        and ``MASK``; the first two are required, and ``CHARS`` must be a
+        rank-1 uint8 dataset extending to at least the byte count its offsets
+        describe.
+    count:
+        How many elements the group is expected to hold, which its ``OFFSETS``
+        and ``MASK`` are checked against.
+    """
     allowed = {MEMBER_OFFSETS, MEMBER_CHARS, MEMBER_MASK}
     extra = set(g.keys()) - allowed
     if extra:

@@ -20,7 +20,16 @@ from .strings import FixedString
 
 
 def _resolve_dtype(dtype: Any) -> np.dtype:
-    """Resolve a dtype-like (incl. :class:`FixedString`) to a NumPy dtype."""
+    """Resolve a dtype-like (incl. :class:`FixedString`) to a NumPy dtype.
+
+    Parameters
+    ----------
+    dtype:
+        A :class:`~h5col.strings.FixedString`, whose own ``dtype`` is handed
+        back, or anything ``np.dtype()`` accepts — a NumPy dtype, a dtype
+        string, or the boolean dtype from :func:`~h5col.booleans.bool_dtype`.
+        Nothing is validated here beyond what ``np.dtype()`` itself rejects.
+    """
     if isinstance(dtype, FixedString):
         return dtype.dtype
     return np.dtype(dtype)

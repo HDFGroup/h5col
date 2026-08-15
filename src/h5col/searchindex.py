@@ -57,6 +57,18 @@ def _encode_query_value(col_ds: Any, value: Any) -> Any:
     where mixed int/float comparisons are exact. NumPy would promote
     int64/uint64 values to float64 and round them, silently corrupting
     comparisons beyond 2**53.
+
+    Parameters
+    ----------
+    col_ds:
+        The column dataset the query runs against. Only its ``dtype`` is
+        read, to decide which domain *value* must land in and to name the
+        column's datatype in the error message.
+    value:
+        The query value in the column's decoded form. A string column takes
+        ``str`` or ``bytes``; anything else takes a Python or NumPy scalar of
+        integer, float, or boolean kind. NaN is rejected: it is unordered and
+        never satisfies a value predicate.
     """
     dtype = col_ds.dtype
     if h5py.check_string_dtype(dtype) is not None:
@@ -103,6 +115,16 @@ def _canon_element(value: Any, *, spacepad: bool = False) -> Any:
     NumPy scalar reads already strip trailing NUL padding from fixed strings
     (the spec's byte-wise rule for NULLTERM/NULLPAD); SPACEPAD storage strips
     its trailing spaces here.
+
+    Parameters
+    ----------
+    value:
+        One element as read back from a dataset — a NumPy scalar, ``bytes``,
+        or a plain Python object. An unrecognized type is returned unchanged.
+    spacepad:
+        True when the value came from SPACEPAD storage, in which case
+        trailing spaces are stripped. Applies to ``bytes`` values only; the
+        caller decides it from the dataset's string padding.
     """
     if isinstance(value, bytes | np.bytes_):
         out = bytes(value)
@@ -351,7 +373,19 @@ class ChunkMinMaxIndex(SearchIndex):
 
     @staticmethod
     def _usable_mask(col_ds: Any, entries: np.ndarray) -> np.ndarray:
-        """Chunks that contain at least one orderable, non-missing element."""
+        """Chunks that contain at least one orderable, non-missing element.
+
+        Parameters
+        ----------
+        col_ds:
+            The source column dataset. Its dtype kind selects the rule (only
+            a float column has NaN elements to discount) and its user fill
+            value tells a NaN fill from an ordinary one.
+        entries:
+            The ``CHUNK_MINMAX`` entries for the data-bearing chunks. Only
+            the ``n``, ``fill_count`` and ``nan_count`` fields are read; the
+            returned mask lines up with them element for element.
+        """
         n = entries["n"]
         fill_count = entries["fill_count"]
         if col_ds.dtype.kind != "f":
@@ -389,7 +423,15 @@ class SortedRowsIndex(SearchIndex):
         return self._ds[: self._table.nrows]
 
     def _body_length(self, nrows: int) -> int:
-        """Sorted-body length after both tails, validating the tail attrs."""
+        """Sorted-body length after both tails, validating the tail attrs.
+
+        Parameters
+        ----------
+        nrows:
+            The table's row count, which the two tail lengths are subtracted
+            from. It also bounds them: tails summing past *nrows* are a
+            conformance violation, and *nrows* names the bound in that error.
+        """
         nan_tail = self.nan_tail_length
         fill_tail = self.fill_tail_length
         if nan_tail is None or fill_tail is None:

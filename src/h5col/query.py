@@ -84,6 +84,15 @@ class _Not:
 
 
 def _as_node(obj: Any) -> Any:
+    """Unwrap *obj* to the expression tree node it carries.
+
+    Parameters
+    ----------
+    obj:
+        The other operand of an ``&`` or ``|`` combination. It must be an
+        :class:`Expression`; anything else — a bare :class:`Field`, a plain
+        value — raises ``SchemaError`` rather than being coerced.
+    """
     if isinstance(obj, Expression):
         return obj._node
     raise SchemaError(f"expected a query Expression, got {obj!r}")
@@ -178,6 +187,14 @@ def field(name: str) -> Field:
 
 
 def _node_repr(node: Any) -> str:
+    """Render an expression tree node as compact text, for ``repr``.
+
+    Parameters
+    ----------
+    node:
+        A ``_Pred``, ``_Not``, ``_And`` or ``_Or`` node, whose children are
+        rendered recursively. Anything else falls back to its ``repr``.
+    """
     if isinstance(node, _Pred):
         if node.op in _PRESENCE_OPS:
             return f"{node.column}.{node.op}()"
@@ -195,6 +212,15 @@ def _node_repr(node: Any) -> str:
 # where= parsing (Expression | List[Tuple] | List[List[Tuple]])
 # --------------------------------------------------------------------------- #
 def _is_pred_tuple(obj: Any) -> bool:
+    """True if *obj* has the shape of a pyarrow filter tuple.
+
+    Parameters
+    ----------
+    obj:
+        Any object. It is a predicate tuple if it is a 3-tuple whose first two
+        elements are strings. The operator string itself is not checked here;
+        :func:`_pred_tuple_to_node` does that.
+    """
     return (
         isinstance(obj, tuple)
         and len(obj) == 3
@@ -204,6 +230,16 @@ def _is_pred_tuple(obj: Any) -> bool:
 
 
 def _pred_tuple_to_node(t: tuple[Any, ...]) -> Any:
+    """Convert one pyarrow filter tuple into an expression tree node.
+
+    Parameters
+    ----------
+    t:
+        A ``(column, operator, value)`` tuple, already shape-checked by
+        :func:`_is_pred_tuple`. The operator must be one of :data:`_TUPLE_OPS`;
+        ``!=`` and ``not in`` become negated ``==`` and ``in`` nodes, and the
+        value of an ``in`` is consumed into a tuple straight away.
+    """
     col, op, value = t
     if op not in _TUPLE_OPS:
         raise SchemaError(
@@ -224,6 +260,15 @@ def _to_expression(where: Any) -> Expression | None:
     """Normalize ``where=`` (any accepted shape) to an :class:`Expression`.
 
     Returns ``None`` for "match every row" (``where=None`` or empty).
+
+    Parameters
+    ----------
+    where:
+        The ``where=`` argument in any accepted shape: an :class:`Expression`,
+        a single ``(column, op, value)`` tuple, a list of such tuples (ANDed),
+        or a list of lists of them (an OR of ANDs). ``None`` and an empty list
+        both mean every row. A bare :class:`Field` — a column reference that
+        was never compared — and anything else raise ``SchemaError``.
     """
     if where is None:
         return None
@@ -265,7 +310,20 @@ class _Leaf:
 
 
 def _dnf(node: Any, negated: bool = False) -> list[list[_Leaf]]:
-    """Normalize to disjunctive normal form: a list of AND-terms of leaves."""
+    """Normalize to disjunctive normal form: a list of AND-terms of leaves.
+
+    Parameters
+    ----------
+    node:
+        The expression tree node to normalize: a ``_Pred``, ``_Not``, ``_And``
+        or ``_Or``. Any other object raises ``SchemaError``.
+    negated:
+        True when *node* sits under an odd number of ``_Not`` nodes. The
+        negation is pushed down through the recursion rather than rewritten
+        into the tree, so a ``_Pred`` reached with this set becomes a negated
+        ``_Leaf``. Callers normalizing a whole expression leave it at the
+        default.
+    """
     if isinstance(node, _Pred):
         return [[_Leaf(node, negated)]]
     if isinstance(node, _Not):
@@ -347,6 +405,17 @@ class QueryPlan:
 # planner
 # --------------------------------------------------------------------------- #
 def _column(table: Table, name: str) -> Column:
+    """The scalar column *name* of *table*, for a predicate to be built on.
+
+    Parameters
+    ----------
+    table:
+        The table whose columns are looked in.
+    name:
+        The column name taken from a predicate leaf. A name the table does not
+        have raises ``KeyError``; a name that resolves to a list column raises
+        ``SchemaError``, since predicates on list columns are not supported.
+    """
     from .column import Column
     from .listcolumn import ListColumn
 
@@ -367,6 +436,13 @@ def _valid_indexes(col: Column) -> list[Any]:
     ``SEARCH_INDEX_LIST``); per the query contract a broken linkage yields no
     usable index and the query silently scans, so the whole resolution is
     guarded, not just the per-index validity check.
+
+    Parameters
+    ----------
+    col:
+        The column whose search indexes are resolved and validity-checked. A
+        column with no indexes, or one whose linkage or index datasets are
+        broken, yields an empty list.
     """
     out: list[Any] = []
     try:
@@ -383,6 +459,16 @@ def _valid_indexes(col: Column) -> list[Any]:
 
 
 def _first(indexes_list: list[Any], cls: type) -> Any | None:
+    """The first index of type *cls* in *indexes_list*, or None if there is none.
+
+    Parameters
+    ----------
+    indexes_list:
+        Indexes to look through, in the order :func:`_valid_indexes` resolved
+        them; when a column has several of one kind, the first one wins.
+    cls:
+        The index class to match, tested with ``isinstance``.
+    """
     for idx in indexes_list:
         if isinstance(idx, cls):
             return idx
@@ -390,10 +476,32 @@ def _first(indexes_list: list[Any], cls: type) -> Any | None:
 
 
 def _sorted_unique(rows: np.ndarray) -> np.ndarray:
+    """Row positions as a sorted, duplicate-free ``int64`` array.
+
+    Parameters
+    ----------
+    rows:
+        Row positions as an index primitive returned them: any order, any
+        integer dtype, duplicates allowed. They are cast to ``int64``.
+    """
     return np.unique(np.asarray(rows, dtype=np.int64))
 
 
 def _chunks_to_rows(col_ds: Any, chunk_ids: np.ndarray, nrows: int) -> np.ndarray:
+    """Expand candidate chunk numbers into every row position they cover.
+
+    Parameters
+    ----------
+    col_ds:
+        The column dataset, whose chunk length sets the rows per chunk (its
+        whole extent when the dataset is contiguous).
+    chunk_ids:
+        Chunk numbers to expand, used in the order given. A pruning index
+        returns them ascending, which is what makes the result ascending too.
+    nrows:
+        The table's row count, which bounds the last chunk so that rows
+        reserved above the table's extent are never included.
+    """
     cl = indexes.source_chunk_len(col_ds, nrows)
     parts = [
         np.arange(c * cl, min(nrows, (c + 1) * cl), dtype=np.int64) for c in chunk_ids
@@ -410,7 +518,20 @@ GATHER_CHUNK_FRACTION = 0.5
 
 
 def _worth_gathering(col: Column, rows: np.ndarray, nrows: int) -> bool:
-    """True if reading *rows* by gather should beat reading the whole column."""
+    """True if reading *rows* by gather should beat reading the whole column.
+
+    Parameters
+    ----------
+    col:
+        The column that would be read. A contiguous (unchunked) column has
+        nothing to coalesce, so a gather never wins on one.
+    rows:
+        The wanted row positions. An empty selection is worth gathering, since
+        it reads nothing at all.
+    nrows:
+        The table's row count, used to count the column's chunks. Zero rows
+        means there is nothing to gather.
+    """
     ds = col.dataset
     if nrows == 0 or ds.chunks is None:
         return False  # nothing to coalesce on a contiguous dataset
@@ -423,7 +544,18 @@ def _worth_gathering(col: Column, rows: np.ndarray, nrows: int) -> bool:
 
 
 def _present_subset(col: Column, raw: np.ndarray) -> np.ndarray:
-    """Present-row mask over a raw value subset (matches Column.is_missing)."""
+    """Present-row mask over a raw value subset (matches Column.is_missing).
+
+    Parameters
+    ----------
+    col:
+        The column the values came from. A boolean column, or one that
+        declares no fill value, has no missing rows at all, so every row of
+        the subset counts as present.
+    raw:
+        Raw stored values for the rows in question, as read from the column.
+        The mask has this shape.
+    """
     if col.is_boolean or not col._has_user_fill():
         return np.ones(raw.shape, dtype=np.bool_)
     return ~_missing.is_missing(raw, col.dataset.fillvalue)
@@ -448,6 +580,15 @@ def _index_query_value(col: Column, value: Any) -> Any:
     numeric, not only strings), so it must become its integer code before it is
     compared against the stored codes by any primitive or the verify path.
     Returns :data:`_NO_MATCH` for an unknown categorical label.
+
+    Parameters
+    ----------
+    col:
+        The column being queried. Only a categorical column changes the value;
+        for every other column the value is handed back untouched.
+    value:
+        A single query value as the caller wrote it: a category label for a
+        categorical column, otherwise a value in the column's own domain.
     """
     if col.is_categorical:
         code = _encode_for(col, value)
@@ -462,6 +603,17 @@ def _encode_for(col: Column, value: Any) -> Any:
     numeric, not just strings); this maps the label to its integer code.
     Returns ``None`` when a categorical label is unknown (no code, no possible
     match); callers treat that as "matches nothing".
+
+    Parameters
+    ----------
+    col:
+        The column the value will be compared against. A categorical column
+        maps the label to its code; every other column goes through
+        ``_encode_query_value``, which canonicalizes the value for exact
+        comparison against the stored values.
+    value:
+        A single query value: a category label for a categorical column,
+        otherwise a value in the column's own domain.
     """
     if col.is_categorical:
         try:
@@ -481,17 +633,47 @@ _EXACT_FLOAT_INT = 2**53
 
 
 def _is_int(value: Any) -> bool:
+    """True for a Python or NumPy integer.
+
+    Parameters
+    ----------
+    value:
+        The query value to test. A ``bool`` does not count as an integer here.
+    """
     # bool is a subclass of int; it is handled by its own branch.
     return not isinstance(value, bool) and isinstance(value, int | np.integer)
 
 
 def _is_real(value: Any) -> bool:
+    """True for a Python or NumPy integer or float.
+
+    Parameters
+    ----------
+    value:
+        The query value to test. A ``bool`` does not count as a real number
+        here, matching :func:`_is_int`.
+    """
     return not isinstance(value, bool) and isinstance(
         value, int | float | np.integer | np.floating
     )
 
 
 def _apply(arr: np.ndarray, op: str, v: Any) -> np.ndarray:
+    """Apply one comparison operator element-wise in NumPy.
+
+    Parameters
+    ----------
+    arr:
+        The values to compare. The caller has already established that the
+        comparison is exact for this dtype.
+    op:
+        One of ``==``, ``<``, ``<=``, ``>``, ``>=``. Anything other than the
+        first four is taken to be ``>=``, so an operator outside the five is
+        not rejected here — callers must not pass one.
+    v:
+        The right-hand value, already cast by the caller to a type that
+        compares exactly against *arr*.
+    """
     if op == "==":
         return np.asarray(arr == v, dtype=np.bool_)
     if op == "<":
@@ -512,6 +694,23 @@ def _vector_compare(
     exact but converts every stored value into a Python object first. Every
     branch here is one where the vectorized comparison is exact by
     construction, so the two paths cannot disagree.
+
+    Parameters
+    ----------
+    raw:
+        Raw stored values for the rows under consideration. Its dtype kind
+        picks the branch; a kind none of them covers returns None.
+    op:
+        The comparison operator. Anything outside :data:`_ORDER_EQ_OPS` — that
+        is, ``in`` — returns None.
+    v:
+        The right-hand query value, already encoded for the column by
+        :func:`_encode_for`. A value whose type does not go with the column's
+        dtype kind, such as a float bound on an integer column, returns None.
+    spacepad:
+        True when the column is a SPACEPAD fixed string, in which case
+        trailing spaces are stripped from *raw* before comparing. It has no
+        effect on any other dtype kind.
     """
     if op not in _ORDER_EQ_OPS:
         return None
@@ -562,7 +761,26 @@ def _vector_compare(
 def _vector_isin(
     raw: np.ndarray, values: set[Any], *, spacepad: bool
 ) -> np.ndarray | None:
-    """Mask for membership computed in NumPy, or None if not provably exact."""
+    """Mask for membership computed in NumPy, or None if not provably exact.
+
+    Parameters
+    ----------
+    raw:
+        Raw stored values for the rows under consideration. Its dtype kind
+        picks the branch; a kind none of them covers returns None.
+    values:
+        The query values to match, already encoded for the column. An empty
+        set matches nothing. Values that cannot equal any stored value — one
+        outside an integer column's range, or a string wider than the column —
+        are dropped here rather than passed to ``np.isin``, which would
+        truncate a too-wide string to the column width and match wrong rows. A
+        value whose type does not go with the column's dtype kind returns
+        None.
+    spacepad:
+        True when the column is a SPACEPAD fixed string, in which case
+        trailing spaces are stripped from *raw* before matching. It has no
+        effect on any other dtype kind.
+    """
     if not values:
         return np.zeros(raw.shape, dtype=np.bool_)
     kind = raw.dtype.kind
@@ -608,6 +826,24 @@ def _compare_subset(col: Column, raw: np.ndarray, op: str, value: Any) -> np.nda
     """Boolean mask of the comparison over a raw subset, in the exact domain.
 
     Only meaningful where the row is present; callers AND with the present mask.
+
+    Parameters
+    ----------
+    col:
+        The column the values came from. It supplies the string padding
+        convention and, for a categorical column, the label-to-code encoding.
+    raw:
+        Raw stored values for the rows under consideration. The mask has this
+        shape.
+    op:
+        One of the value operators: ``in``, or an order or equality operator.
+        Any other operator raises ``SchemaError``.
+    value:
+        The query value, in the caller's own domain — it is encoded for the
+        column here. A collection of values for ``in``, a single value
+        otherwise. An unknown categorical label matches nothing under ``==``,
+        is dropped from an ``in``, and raises ``SchemaError`` under an order
+        operator, which has no answer for a label with no code.
     """
     spacepad = FixedString.is_fixed_string(col.dtype) and is_spacepad(col.dataset)
 
@@ -652,7 +888,25 @@ def _compare_subset(col: Column, raw: np.ndarray, op: str, value: Any) -> np.nda
 def _verify_leaf(
     leaf: _Leaf, table: Table, candidates: np.ndarray | None, plan: LeafPlan
 ) -> np.ndarray:
-    """TRUE rows for a leaf by reading values (scan/verify path, Kleene)."""
+    """TRUE rows for a leaf by reading values (scan/verify path, Kleene).
+
+    Parameters
+    ----------
+    leaf:
+        The predicate leaf to evaluate, with its negation flag.
+    table:
+        The table the leaf's column belongs to; it also supplies the row
+        count.
+    candidates:
+        Row positions still in play from earlier leaves of the same AND-term,
+        sorted ascending, or None when nothing has narrowed the term yet. Only
+        these rows are read, so the result is always a subset of them. With
+        None, a value leaf may first seed its own candidates from a valid
+        CHUNK_MINMAX index, and otherwise every row is read.
+    plan:
+        The plan entry for this leaf. Its method, and any note, are filled in
+        here; modified in place.
+    """
     col = _column(table, leaf.pred.column)
     nrows = table.nrows
     op = leaf.pred.op
@@ -707,7 +961,21 @@ def _verify_leaf(
 
 
 def _exact_leaf(leaf: _Leaf, col: Column, plan: LeafPlan) -> np.ndarray | None:
-    """Exact TRUE rows via a valid index, or None to demote to verify."""
+    """Exact TRUE rows via a valid index, or None to demote to verify.
+
+    Parameters
+    ----------
+    leaf:
+        The predicate leaf. A negated leaf, or one whose operator is not a
+        value operator, cannot be answered exactly from an index and returns
+        None straight away.
+    col:
+        The leaf's column, whose valid indexes are consulted. A column with no
+        index that can answer the operator returns None.
+    plan:
+        The plan entry for this leaf. The index that answered it is recorded
+        here; modified in place, and left untouched when None is returned.
+    """
     if leaf.negated or leaf.pred.op not in _VALUE_OPS:
         return None
     idxs = _valid_indexes(col)
@@ -758,6 +1026,22 @@ def _exact_leaf(leaf: _Leaf, col: Column, plan: LeafPlan) -> np.ndarray | None:
 
 
 def _term_rows(term: list[_Leaf], table: Table, term_plan: TermPlan) -> np.ndarray:
+    """TRUE rows of one AND-term: the intersection of its leaves.
+
+    Parameters
+    ----------
+    term:
+        The leaves of the AND-term. They are reordered for evaluation — the
+        ones an index answers exactly go first, so they narrow the survivors
+        before any column is read — which the intersection makes harmless. An
+        empty term narrows nothing and so matches every row.
+    table:
+        The table being queried; it supplies the columns and the row count.
+    term_plan:
+        The plan entry for this term. One :class:`LeafPlan` is appended for
+        every leaf, in the order the leaves are given rather than the order
+        they are evaluated; modified in place.
+    """
     survivors: np.ndarray | None = None
     verify: list[tuple[_Leaf, LeafPlan]] = []
 
@@ -785,6 +1069,18 @@ def _term_rows(term: list[_Leaf], table: Table, term_plan: TermPlan) -> np.ndarr
 
 
 def _validate(dnf: list[list[_Leaf]], table: Table) -> None:
+    """Check every leaf of the query against the table before any row is read.
+
+    Parameters
+    ----------
+    dnf:
+        The normalized query: a list of AND-terms of leaves. Every leaf of
+        every term is checked, whether or not evaluation would reach it, so
+        the error a malformed query raises does not depend on leaf order or
+        on which indexes happen to exist.
+    table:
+        The table the query runs against, used to resolve each leaf's column.
+    """
     for term in dnf:
         for leaf in term:
             col = _column(table, leaf.pred.column)  # KeyError / list-column SchemaError
@@ -810,6 +1106,18 @@ def _validate(dnf: list[list[_Leaf]], table: Table) -> None:
 
 
 def _run(table: Table, expr: Expression | None) -> tuple[np.ndarray, QueryPlan]:
+    """Evaluate a query, returning its matching rows and the plan it followed.
+
+    The expression is normalized to DNF and validated whole before any row is
+    read; the result is the union of the AND-terms, sorted and duplicate-free.
+
+    Parameters
+    ----------
+    table:
+        The table to query.
+    expr:
+        The query expression, or None to match every row of the table.
+    """
     nrows = table.nrows
     plan = QueryPlan(nrows=nrows)
     if expr is None:
@@ -837,6 +1145,17 @@ def _run(table: Table, expr: Expression | None) -> tuple[np.ndarray, QueryPlan]:
 # brute-force oracle (indexes ignored; independent semantics for tests)
 # --------------------------------------------------------------------------- #
 def _scan_leaf(leaf: _Leaf, table: Table) -> np.ndarray:
+    """TRUE rows of one leaf, read from the values with no index consulted.
+
+    Parameters
+    ----------
+    leaf:
+        The predicate leaf to evaluate, with its negation flag.
+    table:
+        The table being queried. Its column is read whole and compared row by
+        row in Python, which is the point of this path: it depends on nothing
+        the planner depends on.
+    """
     col = _column(table, leaf.pred.column)
     nrows = table.nrows
     op = leaf.pred.op
@@ -887,6 +1206,14 @@ def _oracle_str(col: Column, value: Any) -> Any:
     planner accepts a ``bytes`` query value too, so the oracle must decode it
     to agree (fixed strings are UTF-8/ASCII, whose byte order equals codepoint
     order).
+
+    Parameters
+    ----------
+    col:
+        The column being compared. Only a string column changes the value.
+    value:
+        A single query value. A ``bytes``-like one is decoded; anything else,
+        including a ``str``, passes through unchanged.
     """
     if col.is_string and isinstance(value, (bytes, bytearray, np.bytes_)):
         return bytes(value).decode("utf-8")
@@ -894,6 +1221,20 @@ def _oracle_str(col: Column, value: Any) -> Any:
 
 
 def _py_compare(values: list[Any], op: str, v: Any) -> np.ndarray:
+    """Compare a list of values element-wise in the Python object domain.
+
+    Parameters
+    ----------
+    values:
+        One decoded value per row. Comparing them as Python objects keeps a
+        mixed int/float comparison exact, which NumPy would not.
+    op:
+        One of ``==``, ``<``, ``<=``, ``>``, ``>=``. Any other operator raises
+        ``SchemaError``.
+    v:
+        The right-hand query value, already put in the same domain as
+        *values* by the caller.
+    """
     if op == "==":
         hit = [x == v for x in values]
     elif op == "<":
@@ -910,7 +1251,15 @@ def _py_compare(values: list[Any], op: str, v: Any) -> np.ndarray:
 
 
 def _scan_select(table: Table, expr: Expression | None) -> np.ndarray:
-    """Brute-force reference: evaluate the expression with no index at all."""
+    """Brute-force reference: evaluate the expression with no index at all.
+
+    Parameters
+    ----------
+    table:
+        The table to query. Every column a leaf names is read whole.
+    expr:
+        The query expression, or None to match every row of the table.
+    """
     nrows = table.nrows
     if expr is None:
         return np.arange(nrows, dtype=np.int64)

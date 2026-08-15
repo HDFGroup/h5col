@@ -248,6 +248,17 @@ class Column:
         contiguous range every step of it is wasted: a million-row range spends
         several milliseconds sorting a sequence that was already sorted. Going
         straight to h5py skips all of it.
+
+        Parameters
+        ----------
+        key:
+            The slice of row positions to read. Its start, stop and step are
+            resolved against *n*, so the open-ended and negative forms Python
+            allows are all accepted, as is a negative step.
+        n:
+            The column's row count, which the slice is resolved against. It
+            bounds the read to the logical rows, keeping the reserved rows
+            above ``NROWS`` out of the result.
         """
         start, stop, step = key.indices(n)
         if step > 0:
@@ -268,6 +279,15 @@ class Column:
         which rows exist and how a selection is fetched. *rows* may be a slice,
         a sequence of integers, or a boolean mask with one entry per row.
         Negative positions count back from ``NROWS``.
+
+        Parameters
+        ----------
+        rows:
+            Which rows to read: a slice, a sequence of integer positions, or a
+            boolean mask with one entry per row. None (the default) reads all
+            of ``[0, NROWS)``. Integer positions may be given in any order and
+            may repeat; they are sorted for the gather and the caller's order
+            is restored afterwards.
 
         Raises
         ------
@@ -298,6 +318,13 @@ class Column:
         Elementwise, so it applies equally to a whole column or to any subset
         of one — which is what lets :meth:`read_rows` share it with
         :meth:`read`.
+
+        Parameters
+        ----------
+        raw:
+            A block of values as stored, from :meth:`_raw_block`. A column that
+            needs no decoding — a numeric one — gets it back unchanged, so the
+            result may be this same array rather than a copy.
         """
         if self.is_categorical:
             return categorical.decode_codes(self._table.group, self._ds, raw)
@@ -317,13 +344,32 @@ class Column:
         full-domain column that declares none, have no missing rows — their mask
         is all-False rather than absent, so every scalar column comes back the
         same shape of object.
+
+        Parameters
+        ----------
+        raw:
+            A block of values as stored — undecoded, because the test compares
+            them against the stored fill value. In the all-False case only its
+            length is used, so the mask matches the block either way.
         """
         if self.is_boolean or not self._has_user_fill():
             return np.zeros(raw.shape[0], dtype=np.bool_)
         return missing.is_missing(raw, self._ds.fillvalue)
 
     def _mask(self, raw: npt.NDArray[Any], decoded: npt.NDArray[Any]) -> Any:
-        """Pair *decoded* values with the missing rows *raw* implies."""
+        """Pair *decoded* values with the missing rows *raw* implies.
+
+        Parameters
+        ----------
+        raw:
+            The block of values as stored, used only to derive the mask
+            through :meth:`_missing_mask`. It has to line up row for row with
+            *decoded*, which is not checked here.
+        decoded:
+            The same block after :meth:`_decode`. It is wrapped without
+            copying, so the result may share its memory, and the masked
+            array's fill value is taken from its first masked position.
+        """
         mask = self._missing_mask(raw)
         out = np.ma.MaskedArray(decoded, mask=mask, copy=False)
         if mask.any():
