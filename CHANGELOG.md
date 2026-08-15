@@ -4,7 +4,7 @@ All notable changes to H5Col are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-08-15
 
 ### Added
 
@@ -61,6 +61,20 @@ to follow [Semantic Versioning](https://semver.org/).
 - `Column.units_vocabulary` reads the column's `units_vocabulary` attribute,
   which `ColumnSpec` could already write but nothing could read back.
   `ListColumn` has had the property since 0.1.0.
+
+### Changed
+
+- The API reference records when each entry arrived. Anything added after the
+  first release carries a *New in version* note, and an entry without one has
+  been there since 0.1.0. These pages are built from `main` and published as a
+  single version, so that note is what tells you whether what you are reading
+  exists in the release you installed.
+- The documentation site shows the latest release in its navigation bar, read
+  from this file, so a page built from `main` says which release it is ahead of.
+- The documentation build now refuses a `versionadded` or `versionchanged` that
+  names a version which is neither a release nor the one in development, or
+  that sits below a numpydoc section — where Sphinx reads it as one more
+  parameter and renders it alongside the real ones instead of as a note.
 
 ### Fixed
 
