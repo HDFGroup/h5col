@@ -13,7 +13,13 @@ import numpy as np
 import pytest
 
 from h5col import ColumnSpec, FixedString, Table, bool_dtype, field, query
-from h5col.query import _vector_compare, _vector_isin
+from h5col.exceptions import SchemaError
+from h5col.query import (
+    _ORDER_EQ_OPS,
+    _apply,
+    _vector_compare,
+    _vector_isin,
+)
 
 OPS = ["==", "<", "<=", ">", ">="]
 
@@ -232,3 +238,37 @@ def test_negated_leaf_matches_oracle(h5file: h5py.File) -> None:
         table.select(expr).row_positions.tolist()
         == query._scan_select(table, expr).tolist()
     )
+
+
+# --------------------------------------------------------------------------- #
+# _apply enforces its operator set rather than trusting the caller
+# --------------------------------------------------------------------------- #
+def test_apply_answers_each_operator_it_claims() -> None:
+    arr = np.array([1, 2, 3], dtype=np.int64)
+    assert _apply(arr, "==", np.int64(2)).tolist() == [False, True, False]
+    assert _apply(arr, "<", np.int64(2)).tolist() == [True, False, False]
+    assert _apply(arr, "<=", np.int64(2)).tolist() == [True, True, False]
+    assert _apply(arr, ">", np.int64(2)).tolist() == [False, False, True]
+    assert _apply(arr, ">=", np.int64(2)).tolist() == [False, True, True]
+
+
+def test_apply_refuses_an_operator_it_does_not_know() -> None:
+    # Not reachable through the public API: _vector_compare is the only caller
+    # and admits exactly _ORDER_EQ_OPS. What this pins is the contract — an
+    # operator added to that set but not here used to be answered as ">=",
+    # which returns the wrong rows and says nothing about it.
+    with pytest.raises(SchemaError, match="unknown comparison operator"):
+        _apply(np.array([1, 2, 3], dtype=np.int64), "!=", np.int64(2))
+
+
+def test_the_caller_gate_and_apply_agree_on_the_operator_set() -> None:
+    # The two must not drift: every operator _vector_compare lets through has
+    # to be one _apply implements, and vice versa.
+    arr = np.array([1, 2, 3], dtype=np.int64)
+    for op in _ORDER_EQ_OPS:
+        assert _vector_compare(arr, op, 2, spacepad=False) is not None
+        assert _apply(arr, op, np.int64(2)) is not None
+    for op in ("in", "!=", "is_null", ""):
+        assert _vector_compare(arr, op, 2, spacepad=False) is None
+        with pytest.raises(SchemaError):
+            _apply(arr, op, np.int64(2))

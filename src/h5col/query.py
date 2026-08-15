@@ -667,12 +667,21 @@ def _apply(arr: np.ndarray, op: str, v: Any) -> np.ndarray:
         The values to compare. The caller has already established that the
         comparison is exact for this dtype.
     op:
-        One of ``==``, ``<``, ``<=``, ``>``, ``>=``. Anything other than the
-        first four is taken to be ``>=``, so an operator outside the five is
-        not rejected here — callers must not pass one.
+        One of :data:`_ORDER_EQ_OPS`. Any other operator raises
+        :class:`~h5col.exceptions.SchemaError`, as it does in
+        :func:`_py_compare` and :func:`_compare_subset`.
     v:
         The right-hand value, already cast by the caller to a type that
         compares exactly against *arr*.
+
+    Raises
+    ------
+    SchemaError
+        If ``op`` is not one this understands. Unreachable through the public
+        API. :func:`_vector_compare` is the only caller and admits exactly
+        these five, but an operator added to that set and not to this
+        function would otherwise be answered as ``>=``, silently returning
+        the wrong rows.
     """
     if op == "==":
         return np.asarray(arr == v, dtype=np.bool_)
@@ -682,7 +691,9 @@ def _apply(arr: np.ndarray, op: str, v: Any) -> np.ndarray:
         return np.asarray(arr <= v, dtype=np.bool_)
     if op == ">":
         return np.asarray(arr > v, dtype=np.bool_)
-    return np.asarray(arr >= v, dtype=np.bool_)
+    if op == ">=":
+        return np.asarray(arr >= v, dtype=np.bool_)
+    raise SchemaError(f"unknown comparison operator {op!r}")
 
 
 def _vector_compare(
