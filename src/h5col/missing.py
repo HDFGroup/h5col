@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .exceptions import FillValueError
+from .opaque import is_opaque_dtype, opaque_fill_bytes
 
 # H5Col "Recommended fill values" table, keyed by NumPy dtype name.
 _RECOMMENDED: dict[str, Any] = {
@@ -35,6 +36,7 @@ def recommended_fill(dtype: Any) -> Any:
     """Return H5Col's recommended fill value for *dtype*.
 
     - Fixed- or variable-length string dtypes → ``b""``.
+    - Opaque dtypes → :func:`opaque_fill_bytes` for that width.
     - Enumerations with a ``MISSING`` member → the integer code of that member
       (the spec's enum fill convention).
     - Enumerations without a ``MISSING`` member, including the H5Col boolean
@@ -50,6 +52,9 @@ def recommended_fill(dtype: Any) -> Any:
     """
     if h5py.check_string_dtype(dtype) is not None:
         return b""
+    if is_opaque_dtype(dtype):
+        resolved = np.dtype(dtype)
+        return resolved.type(opaque_fill_bytes(resolved.itemsize))
     members = h5py.check_enum_dtype(dtype)
     if members is not None:
         if "MISSING" in members:

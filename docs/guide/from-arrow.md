@@ -49,17 +49,42 @@ the user rather than silently done, because it drops a guarantee: a list column
 does not fix its row lengths, so nothing afterwards holds the imported column to
 a fixed count.
 
-Binary columns are refused for a third reason. H5Col does store raw bytes with
-an opaque (`H5T_OPAQUE`) fixed-width column, a fill-value rule, a sorting order,
-and a hash for search indexes. What has no home is Arrow's variable-length
-`binary`: with no fixed width, there is nothing to size a column to.
-`fixed_size_binary` does carry a width and this package does not support it yet.
+Variable-length `binary` is refused for a third reason, and this one cannot be
+worked around at all. Padding the blobs to a common width would not survive the
+trip: no byte is safe to strip from the end of a blob, since any byte can
+legitimately be part of one. What is missing is the length, and no padding
+scheme carries it. Convert to `fixed_size_binary` if the values do share a
+width — that maps exactly, as the next section explains.
 
-The same boundary runs the other way. A column whose datatype the Arrow export
-has no type for — opaque, compound, array, complex — is refused by name when
-you call `to_arrow`, rather than being handed to `pyarrow` to fail on. The data
-is still there: read it with `read()`, or reach the stored values through the
-column's `dataset`.
+## Raw bytes
+
+`fixed_size_binary[n]` becomes an *opaque* column: `n` bytes per row, stored
+back to back with no offsets, which is byte-for-byte what Arrow holds. The
+buffer is handed over rather than converted, in both directions.
+
+Opaque columns raise the missing-value question in its sharpest form. A fill
+value has to be a value the column's data will not contain, and for raw bytes
+there is no such value in principle — any byte string might be real data. H5Col
+picks one that is merely very unlikely: the ASCII marker `FILL` followed by
+rising byte values, so an eight-byte column's fill is
+
+```text
+46 49 4c 4c 01 02 03 04     "FILL...."
+```
+
+The rising tail is the part that earns its keep. All zeros and all `0xFF` are
+what zero padding, erased flash and uninitialized memory leave behind, and a
+fill made of either would collide constantly. A counting sequence is something
+data almost never is.
+
+Unlikely is not impossible, so the collision check applies here as everywhere
+else: a column that does contain the pattern is refused, and you name a fill of
+your own through the specs. One case deserves care — a one-byte opaque column
+has only 256 possible values and the recommended fill claims one of them, which
+is a real risk rather than a remote one.
+
+What has no home is Arrow's variable-length `binary`. With no fixed width, there
+is nothing to size a column to.
 
 ## Nulls have to become values
 

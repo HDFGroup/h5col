@@ -18,6 +18,7 @@ H5Col column           Arrow type
 numeric                the matching primitive, data buffer shared
 boolean                ``bool_``
 fixed-length string    ``large_string``
+opaque                 ``fixed_size_binary[n]``, data buffer shared
 categorical            ``dictionary<indices=<code dtype>, values=...>``
 list column            ``large_list<...>``, buffers shared
 =====================  =========================================
@@ -40,6 +41,7 @@ from .booleans import bool_dtype, decode_bool, is_bool_dtype
 from .categorical import choose_code_dtype
 from .exceptions import ConformanceError, SchemaError
 from .missing import recommended_fill, validate_fill_outside_range
+from .opaque import is_opaque_dtype
 from .reserved import (
     ATTR_CLASS,
     ATTR_DESCRIPTION,
@@ -200,12 +202,33 @@ def _categorical_array(col: Column, raw: npt.NDArray[Any], mask: Any) -> Any:
     )
 
 
+def _opaque_array(raw: npt.NDArray[Any], mask: npt.NDArray[np.bool_]) -> Any:
+    """An opaque block as an Arrow ``fixed_size_binary``, buffer and all.
+
+    Both sides store a fixed count of bytes per value, back to back and with no
+    offsets, so the stored block goes across as it is rather than converted.
+
+    Parameters
+    ----------
+    raw:
+        The stored bytes, one row per element.
+    mask:
+        True where the row is missing.
+    """
+    pa = require_pyarrow()
+    return pa.FixedSizeBinaryArray.from_buffers(
+        pa.binary(raw.dtype.itemsize),
+        raw.shape[0],
+        [_validity(mask), pa.py_buffer(np.ascontiguousarray(raw))],
+    )
+
+
 #: NumPy dtype kinds the Arrow export has no type to offer, and what to call
 #: them in the error. H5Col permits these columns — the convention lets a column
 #: dataset carry any HDF5 datatype — so the refusal is about this conversion,
 #: not about the file.
 _UNCONVERTIBLE_KINDS = {
-    "V": "an opaque, compound, or array datatype",
+    "V": "a compound or array datatype",
     "c": "a complex datatype",
 }
 
@@ -263,6 +286,8 @@ def column_array(col: Column, rows: Any = None) -> Any:
         return string_array(raw, nbytes, mask)
     if col.is_boolean:
         return pa.array(decode_bool(raw), mask=mask)
+    if is_opaque_dtype(raw.dtype):
+        return _opaque_array(raw, mask)
     _refuse_dtype(col.name, raw.dtype)
     return pa.array(_native(raw), mask=mask)
 
@@ -495,6 +520,8 @@ def _leaf_array(ds: Any, count: int) -> Any:
         return string_array(raw, FixedString.from_dtype(ds.dtype).nbytes, mask)
     if is_bool_dtype(ds.dtype):
         return pa.array(decode_bool(raw), mask=mask)
+    if is_opaque_dtype(raw.dtype):
+        return _opaque_array(raw, mask)
     _refuse_dtype(ds.name, raw.dtype)
     return pa.array(_native(raw), mask=mask)
 
@@ -628,10 +655,9 @@ _UNSUPPORTED = {
     "union": "H5Col has no union type",
     "null": "a column of only nulls has no datatype to store",
     "binary": "H5Col column datatypes are fixed-width, and variable-length "
-    "bytes give nothing to size a column to; a fixed_size_binary column has a "
-    "width, though this package does not map one yet",
-    "fixed_size_binary": "these belong in an opaque column, which the "
-    "convention permits and this package does not write yet",
+    "bytes give nothing to size a column to; padding them to a common width "
+    "would not survive, no byte being safe to strip from the end of a blob — "
+    "convert to fixed_size_binary if the values do share a width",
     "fixed_size_list": "this package writes no array-typed columns, which is "
     "where a fixed count per row belongs; convert to a list type first, which "
     "stores the same values but fixes no row length",
@@ -818,6 +844,8 @@ def _values_spec_from_type(field_name: str, arrow_type: Any, values: Any) -> Any
     key = str(arrow_type)
     if pa.types.is_boolean(arrow_type):
         return LeafValuesSpec(dtype=bool_dtype())
+    if pa.types.is_fixed_size_binary(arrow_type):
+        return LeafValuesSpec(dtype=np.dtype(f"V{arrow_type.byte_width}"))
     if key in _PRIMITIVE_DTYPES:
         return LeafValuesSpec(dtype=np.dtype(_PRIMITIVE_DTYPES[key]))
     raise SchemaError(
@@ -905,6 +933,15 @@ def _spec_from_field(field: Any, column: Any) -> Any:
             name=field.name,
             dtype=text,
             **_annotations(field, text.dtype, allowed=_SCALAR_METADATA),
+        )
+
+    if pa.types.is_fixed_size_binary(ty):
+        # Raw bytes of one width per row is exactly an opaque column. No valid
+        # range: a bound has no meaning over bytes with no encoding.
+        return ColumnSpec(
+            name=field.name,
+            dtype=np.dtype(f"V{ty.byte_width}"),
+            **_annotations(field, None, allowed=_COMMON_METADATA),
         )
 
     if key in _PRIMITIVE_DTYPES:
@@ -1156,7 +1193,9 @@ def append_values(spec: Any, column: Any) -> Any:
         return column.to_pylist()
     if spec.is_categorical or FixedString.is_fixed_string(spec.resolved_dtype()):
         # Labels and text go across as Python objects; `append` maps None to the
-        # column's fill for both.
+        # column's fill for both. Opaque columns need no branch of their own:
+        # `to_numpy` hands back an object array of bytes that casts to the void
+        # dtype directly, nulls included.
         return column.to_pylist()
     if spec.is_boolean:
         return column.to_numpy(zero_copy_only=False)

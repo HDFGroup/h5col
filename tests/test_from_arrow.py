@@ -385,3 +385,80 @@ def test_string_values_get_a_mask_when_an_element_is_null(h5file: h5py.File) -> 
     table = Table.from_arrow(h5file.create_group("t"), source)
     assert "MASK" in table["tags"].group["VALUES"]
     assert table["tags"].read() == [["a", None]]
+
+
+# --------------------------------------------------------------------------- #
+# Opaque columns: raw bytes of a fixed width
+# --------------------------------------------------------------------------- #
+def _digests(with_null: bool = False) -> Any:
+    values: list[Any] = [b"\x01" * 8, b"\x02" * 8]
+    if with_null:
+        values.append(None)
+    return pa.table({"digest": pa.array(values, type=pa.binary(8))})
+
+
+def test_fixed_size_binary_becomes_an_opaque_column(h5file: h5py.File) -> None:
+    table = Table.from_arrow(h5file.create_group("t"), _digests())
+    table.validate(deep=True)
+    assert table["digest"].dtype == np.dtype("V8")
+    assert [bytes(v) for v in table["digest"].read()] == [b"\x01" * 8, b"\x02" * 8]
+    assert table.to_arrow().column("digest").to_pylist() == [b"\x01" * 8, b"\x02" * 8]
+
+
+def test_an_opaque_column_gets_the_recommended_byte_pattern(h5file: h5py.File) -> None:
+    # No byte string is out of range for opaque data, so the fill is one chosen
+    # to be unlikely rather than impossible: ASCII FILL, then rising bytes.
+    table = Table.from_arrow(h5file.create_group("t"), _digests())
+    assert bytes(table["digest"].fill_value) == b"FILL\x01\x02\x03\x04"
+
+
+def test_opaque_nulls_survive_the_round_trip(h5file: h5py.File) -> None:
+    table = Table.from_arrow(h5file.create_group("t"), _digests(with_null=True))
+    assert list(table["digest"].is_missing()) == [False, False, True]
+    assert table.to_arrow().column("digest").to_pylist() == [
+        b"\x01" * 8,
+        b"\x02" * 8,
+        None,
+    ]
+
+
+def test_data_holding_the_fill_pattern_is_refused(h5file: h5py.File) -> None:
+    # Unlikely is not impossible, so the collision check applies here as it
+    # does to every other datatype.
+    source = pa.table(
+        {"digest": pa.array([b"FILL\x01\x02\x03\x04", b"\x02" * 8], type=pa.binary(8))}
+    )
+    with pytest.raises(SchemaError, match="occurs in the data"):
+        Table.from_arrow(h5file.create_group("t"), source)
+
+
+def test_a_fill_can_be_chosen_for_an_opaque_column(h5file: h5py.File) -> None:
+    source = pa.table(
+        {"digest": pa.array([b"FILL\x01\x02\x03\x04", None], type=pa.binary(8))}
+    )
+    specs = specs_from_arrow(_digests())
+    specs[0].fill_value = np.void(b"\xff" * 8)
+    table = Table.from_arrow(h5file.create_group("t"), source, specs=specs)
+    assert list(table["digest"].is_missing()) == [False, True]
+    assert table.to_arrow().column("digest").to_pylist() == [
+        b"FILL\x01\x02\x03\x04",
+        None,
+    ]
+
+
+def test_a_list_of_fixed_size_binary_imports(h5file: h5py.File) -> None:
+    source = pa.table(
+        {
+            "digests": pa.array(
+                [[b"\x01" * 4], [], [b"\x02" * 4, b"\x03" * 4]],
+                type=pa.large_list(pa.binary(4)),
+            )
+        }
+    )
+    table = Table.from_arrow(h5file.create_group("t"), source)
+    table.validate(deep=True)
+    assert table.to_arrow().column("digests").to_pylist() == [
+        [b"\x01" * 4],
+        [],
+        [b"\x02" * 4, b"\x03" * 4],
+    ]

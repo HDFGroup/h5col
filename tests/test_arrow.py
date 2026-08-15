@@ -520,31 +520,48 @@ def test_select_rejects_a_bad_row_spec(h5file: h5py.File) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Datatypes H5Col stores but Arrow has no type for
+# Opaque columns, and the datatypes that share NumPy's V kind with them
 # --------------------------------------------------------------------------- #
 def _opaque_column(h5file: h5py.File, where: str = "t") -> Table:
-    """An opaque column, which the convention permits and h5col writes."""
     t = Table.create(
-        h5file.create_group(where),
-        [
-            ColumnSpec(
-                name="digest", dtype=np.dtype("V8"), fill_value=np.void(b"\xff" * 8)
-            )
-        ],
+        h5file.create_group(where), [ColumnSpec(name="digest", dtype=np.dtype("V8"))]
     )
     t.append({"digest": np.array([b"\x01" * 8, b"\x02" * 8], dtype="V8")})
     return t
 
 
-def test_an_opaque_column_is_refused_by_name(h5file: h5py.File) -> None:
-    # Left to pyarrow this fails with "Unsupported numpy type 20", which says
-    # nothing about the column or about what to do instead.
+def test_an_opaque_column_exports_as_fixed_size_binary(h5file: h5py.File) -> None:
+    # Both sides hold a fixed count of bytes per value, back to back, so the
+    # stored block is handed over rather than converted.
     t = _opaque_column(h5file)
-    t.validate(deep=True)  # the table itself is perfectly conformant
-    with pytest.raises(SchemaError, match="opaque, compound, or array datatype"):
+    t.validate(deep=True)
+    out = t.to_arrow()
+    assert out.schema.field("digest").type == pa.binary(8)
+    assert out.column("digest").to_pylist() == [b"\x01" * 8, b"\x02" * 8]
+    assert t["digest"].to_arrow().to_pylist() == [b"\x01" * 8, b"\x02" * 8]
+
+
+def test_an_opaque_columns_missing_rows_become_nulls(h5file: h5py.File) -> None:
+    t = _opaque_column(h5file, where="m")
+    t.append({"digest": [None]})
+    assert t.to_arrow().column("digest").to_pylist() == [
+        b"\x01" * 8,
+        b"\x02" * 8,
+        None,
+    ]
+
+
+def test_a_compound_column_is_still_refused_by_name(h5file: h5py.File) -> None:
+    # Compound and sub-array datatypes share NumPy's V kind with opaque, and
+    # unlike opaque they have no Arrow type here.
+    pair = np.dtype([("a", "i4"), ("b", "f8")])
+    t = Table.create(
+        h5file.create_group("t"),
+        [ColumnSpec(name="pair", dtype=pair, fill_value=np.zeros((), dtype=pair))],
+    )
+    t.append({"pair": np.array([(1, 2.0)], dtype=pair)})
+    with pytest.raises(SchemaError, match="compound or array datatype"):
         t.to_arrow()
-    with pytest.raises(SchemaError, match="digest"):
-        t["digest"].to_arrow()
 
 
 def test_a_complex_column_is_refused_by_name(h5file: h5py.File) -> None:
@@ -557,20 +574,16 @@ def test_a_complex_column_is_refused_by_name(h5file: h5py.File) -> None:
         t.to_arrow()
 
 
-def test_an_opaque_list_leaf_is_refused_by_name(h5file: h5py.File) -> None:
-    # The leaf path builds its own arrays, so it needs its own guard.
+def test_an_opaque_list_leaf_exports_too(h5file: h5py.File) -> None:
+    # The leaf path builds its own arrays, so it needs its own branch.
     t = Table.create(
         h5file.create_group("t"),
-        [
-            ListColumnSpec(
-                name="digests",
-                values=LeafValuesSpec(dtype="V8", fill_value=np.void(b"\xff" * 8)),
-            )
-        ],
+        [ListColumnSpec(name="digests", values=LeafValuesSpec(dtype="V8"))],
     )
     t.append({"digests": [[np.void(b"\x01" * 8)], []]})
-    with pytest.raises(SchemaError, match="opaque, compound, or array datatype"):
-        t.to_arrow()
+    out = t.to_arrow()
+    assert out.schema.field("digests").type == pa.large_list(pa.binary(8))
+    assert out.column("digests").to_pylist() == [[b"\x01" * 8], []]
 
 
 def test_a_variable_length_string_column_still_exports(h5file: h5py.File) -> None:

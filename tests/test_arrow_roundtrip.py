@@ -72,6 +72,16 @@ CASES: dict[str, tuple[list[Any], dict[str, list[Any]]]] = {
         [ColumnSpec(name="v", dtype="i4", categories=["low", "high"])],
         {"v": ["low", "high", None]},
     ),
+    "opaque": (
+        # Raw bytes of one width per row, with a missing one. The fill is
+        # H5Col's recommended byte pattern, which the data does not contain.
+        [ColumnSpec(name="v", dtype=np.dtype("V8"))],
+        {"v": [b"\x01" * 8, None, b"\xff" * 8]},
+    ),
+    "list-opaque": (
+        [ListColumnSpec(name="v", values=LeafValuesSpec(dtype=np.dtype("V4")))],
+        {"v": [[b"\x01" * 4], [], [b"\x02" * 4, b"\x03" * 4]]},
+    ),
     "list-numeric": (
         [ListColumnSpec(name="v", values=LeafValuesSpec(dtype="f8"), nullable=True)],
         # A null row, an empty row, and a null element inside a row.

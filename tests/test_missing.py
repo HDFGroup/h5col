@@ -22,6 +22,7 @@ from h5col.missing import (
     recommended_fill,
     validate_fill_outside_range,
 )
+from h5col.opaque import is_opaque_dtype, opaque_fill_bytes
 from h5col.strings import FixedString
 
 
@@ -486,3 +487,53 @@ def test_read_then_append_preserves_missing_rows(h5file: h5py.File) -> None:
             a[name].is_missing(), b[name].is_missing(), err_msg=name
         )
         assert a[name].read().tolist() == b[name].read().tolist()
+
+
+# --------------------------------------------------------------------------- #
+# The opaque fill pattern
+# --------------------------------------------------------------------------- #
+def test_the_opaque_fill_is_the_marker_then_rising_bytes() -> None:
+    assert opaque_fill_bytes(8) == b"FILL\x01\x02\x03\x04"
+    assert opaque_fill_bytes(4) == b"FILL"
+    assert opaque_fill_bytes(6) == b"FILL\x01\x02"
+
+
+def test_a_narrow_opaque_column_gets_what_fits_of_the_marker() -> None:
+    assert opaque_fill_bytes(1) == b"F"
+    assert opaque_fill_bytes(2) == b"FI"
+    assert all(len(opaque_fill_bytes(n)) == n for n in range(1, 40))
+
+
+def test_the_rising_tail_wraps_through_zero() -> None:
+    # Byte i of the tail is (i + 1) % 256, so 0xFF is followed by 0x00 and the
+    # count starts again.
+    wide = opaque_fill_bytes(4 + 258)
+    tail = wide[4:]
+    assert tail[254] == 0xFF
+    assert tail[255] == 0x00
+    assert tail[256] == 0x01
+
+
+def test_the_pattern_is_neither_all_zeros_nor_all_ones() -> None:
+    # Those two are what padding, erased flash and uninitialized memory leave
+    # behind, which is exactly why the fill must not be either.
+    for n in (1, 4, 8, 16, 64):
+        value = opaque_fill_bytes(n)
+        assert value != bytes(n)
+        assert value != b"\xff" * n
+
+
+def test_recommended_fill_uses_the_pattern_for_opaque() -> None:
+    for n in (1, 4, 8, 32):
+        fill = recommended_fill(np.dtype(f"V{n}"))
+        assert bytes(fill) == opaque_fill_bytes(n)
+
+
+def test_a_compound_dtype_is_not_opaque() -> None:
+    # Compound and sub-array datatypes share NumPy's V kind and have no
+    # recommended fill of their own.
+    assert not is_opaque_dtype(np.dtype([("a", "i4")]))
+    assert not is_opaque_dtype(np.dtype(("f8", (3,))))
+    assert is_opaque_dtype(np.dtype("V8"))
+    with pytest.raises(FillValueError):
+        recommended_fill(np.dtype([("a", "i4")]))

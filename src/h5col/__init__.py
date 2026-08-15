@@ -14,7 +14,7 @@ from __future__ import annotations
 # hdf5plugin first. It is a required dependency, not an optional extra.
 import hdf5plugin as _hdf5plugin  # noqa: F401
 
-from . import indexes, lists, missing, ordering, references, reserved
+from . import indexes, lists, missing, opaque, ordering, references, reserved
 from .arrow import specs_from_arrow
 from .booleans import bool_dtype, decode_bool, encode_bool, is_bool_dtype
 from .column import Column
@@ -40,6 +40,7 @@ from .filters import (
 )
 from .listcolumn import ListColumn
 from .missing import is_missing, recommended_fill, validate_fill_outside_range
+from .opaque import is_opaque_dtype, opaque_fill_bytes
 from .query import Expression, QueryPlan, Selection, field
 from .searchindex import (
     BitmapIndex,
@@ -69,6 +70,7 @@ __all__ = [
     "indexes",
     "lists",
     "missing",
+    "opaque",
     "ordering",
     "references",
     "reserved",
@@ -91,6 +93,9 @@ __all__ = [
     "is_bool_dtype",
     "encode_bool",
     "decode_bool",
+    # opaque
+    "is_opaque_dtype",
+    "opaque_fill_bytes",
     # arrow interchange
     "specs_from_arrow",
     # filters

@@ -43,6 +43,21 @@ to follow [Semantic Versioning](https://semver.org/).
   H5Col](https://hdfgroup.github.io/h5col/guide/from-arrow.html), covers all
   of this in prose.
 
+- **Opaque columns work, and cross to Arrow and back.** An opaque column holds a
+  fixed number of raw bytes per row. `h5col.opaque_fill_bytes` supplies the fill
+  value recommendation: the ASCII marker `FILL` followed by rising byte values,
+  so an eight-byte column's fill is `46 49 4c 4c 01 02 03 04` and reads as
+  `FILL....` in a hex dump. No byte string can be reserved by being out of
+  range, since any of them might be real data, so the aim is a value that is
+  vanishingly unlikely rather than impossible. The rising tail is what makes it
+  so. A counting byte sequence is something opaque data almost never has. The
+  collision check applies as it does to every other datatype, so a column that
+  does contain the pattern is still refused. Consumers read a fill value from
+  the dataset creation property list and never recompute it, so this is a
+  writer-side default: a file written this way is readable by anything
+  conformant. Arrow's `fixed_size_binary[n]` maps to an `n`-byte opaque column
+  exactly. Variable-length Arrow `binary` remains refused.
+
 - `Column.units_vocabulary` reads the column's `units_vocabulary` attribute,
   which `ColumnSpec` could already write but nothing could read back.
   `ListColumn` has had the property since 0.1.0.

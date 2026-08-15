@@ -69,6 +69,8 @@ Column datatypes:
    h5col.is_bool_dtype
    h5col.encode_bool
    h5col.decode_bool
+   h5col.is_opaque_dtype
+   h5col.opaque_fill_bytes
 ```
 
 Filters:

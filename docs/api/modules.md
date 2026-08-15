@@ -27,6 +27,14 @@ and {meth}`Column.to_arrow <h5col.Column.to_arrow>`. Needs the optional
    :no-index:
 ```
 
+## h5col.opaque
+
+```{eval-rst}
+.. automodule:: h5col.opaque
+   :members:
+   :no-index:
+```
+
 ## h5col.ordering
 
 ```{eval-rst}
