@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import h5py
 import hdf5plugin
 import numpy as np

@@ -561,7 +561,7 @@ def _present_subset(col: Column, raw: np.ndarray) -> np.ndarray:
     return ~_missing.is_missing(raw, col.dataset.fillvalue)
 
 
-#: Sentinel: a categorical label that has no code (matches nothing).
+#: Stands in for a categorical label that has no code, so it matches nothing.
 _NO_MATCH = object()
 
 #: Exceptions from a primitive that mean "this index cannot answer" — the query
@@ -1104,7 +1104,8 @@ def _validate(dnf: list[list[_Leaf]], table: Table) -> None:
             # An order comparison against an unknown categorical label has no
             # defined answer. Reject it EAGERLY here — before any per-term
             # short-circuiting — so the error is deterministic and independent
-            # of leaf order and index configuration (planner == oracle).
+            # of leaf order and index configuration: the planner and the
+            # reference path below must answer alike.
             if (
                 col.is_categorical
                 and leaf.pred.op in _RANGE_OPS
@@ -1153,7 +1154,7 @@ def _run(table: Table, expr: Expression | None) -> tuple[np.ndarray, QueryPlan]:
 
 
 # --------------------------------------------------------------------------- #
-# brute-force oracle (indexes ignored; independent semantics for tests)
+# brute-force reference (indexes ignored; independent semantics for tests)
 # --------------------------------------------------------------------------- #
 def _scan_leaf(leaf: _Leaf, table: Table) -> np.ndarray:
     """TRUE rows of one leaf, read from the values with no index consulted.
@@ -1199,24 +1200,24 @@ def _scan_leaf(leaf: _Leaf, table: Table) -> np.ndarray:
                 cmp = _py_compare(codes, op, cv)
     elif op == "in":
         vals = col.read(masked=False).tolist()
-        targets = {_oracle_str(col, v) for v in leaf.pred.value}
+        targets = {_decoded_str(col, v) for v in leaf.pred.value}
         cmp = np.array([v in targets for v in vals], dtype=np.bool_)
     else:
         vals = col.read(masked=False).tolist()
-        cmp = _py_compare(vals, op, _oracle_str(col, leaf.pred.value))
+        cmp = _py_compare(vals, op, _decoded_str(col, leaf.pred.value))
 
     if leaf.negated:
         cmp = ~cmp
     return np.flatnonzero(present & cmp).astype(np.int64)
 
 
-def _oracle_str(col: Column, value: Any) -> Any:
-    """Coerce a ``bytes`` query value to ``str`` for the oracle's string path.
+def _decoded_str(col: Column, value: Any) -> Any:
+    """Coerce a ``bytes`` query value to ``str`` for the reference path.
 
-    The oracle compares decoded ``str`` from ``col.read()``; the byte-wise
-    planner accepts a ``bytes`` query value too, so the oracle must decode it
-    to agree (fixed strings are UTF-8/ASCII, whose byte order equals codepoint
-    order).
+    The reference path compares against decoded ``str`` from ``col.read()``,
+    while the byte-wise planner accepts a ``bytes`` query value too, so the
+    value has to be decoded for the two to agree (fixed strings are
+    UTF-8/ASCII, whose byte order equals codepoint order).
 
     Parameters
     ----------

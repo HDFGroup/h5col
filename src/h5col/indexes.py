@@ -1505,8 +1505,12 @@ def _require_kind_attr(obj: Any, name: str) -> None:
     Parameters
     ----------
     obj:
-        The search-index dataset. It must already carry ``KIND``: the caller
-        checks that, and a missing attribute raises ``KeyError`` here.
+        A dataset already known to carry ``KIND``. Absence is not checked here
+        because absence is not a violation: by rule 3 a ``KIND``-less dataset
+        in ``SEARCH_INDEXES`` is an *accompanying* dataset that some index
+        requires, such as a BITMAP's values. Deciding which of the two a
+        dataset is belongs to :func:`validate_search_indexes`, and only the
+        branch that found ``KIND`` calls this.
     name:
         The index dataset's name, used only to make the error messages
         specific.
