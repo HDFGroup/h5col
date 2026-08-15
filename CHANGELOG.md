@@ -84,6 +84,15 @@ to follow [Semantic Versioning](https://semver.org/).
   near the limits is free, the message says so and offers the remedy: widen the
   datatype.
 
+- A `None` element written into a fixed-length string list leaf that declares
+  no fill value was stored as empty bytes rather than refused. With no fill
+  value to compare against, that element reads back as an empty string which is
+  *present* — the row was written to say "missing" and says the opposite. Every
+  other non-boolean leaf already raised in that situation; the check now covers
+  all of them, so the two cannot drift apart again. Leaves `h5col` creates are
+  unaffected, having always been given a fill value; this is reachable through a
+  file whose leaf came from elsewhere.
+
 - The Arrow export left the `ordered` flag of a categorical column's Arrow
   type at 0 even for an ordered categorical, recording the fact only in the
   `h5col.ordered` metadata key. A consumer reading the type rather than the

@@ -687,3 +687,71 @@ def test_selection_read_narrows_a_list_column(h5file: h5py.File) -> None:
     xs_via_query = _count_reads(lambda: sel.read(["xs"]))
     # The query still scans "i"; what must shrink is the list column's share.
     assert xs_via_query - n < xs_whole / 5
+
+
+# --------------------------------------------------------------------------- #
+# A leaf that declares no fill value has no way to say "missing"
+#
+# h5col always gives a leaf a fill value, so these tables are built the way a
+# foreign tool might leave one: the VALUES dataset rebuilt without one.
+# --------------------------------------------------------------------------- #
+def _leaf_without_a_fill(h5file: h5py.File, dtype: Any) -> Table:
+    from h5col._hdf5 import create_column_dataset
+    from h5col.reserved import MEMBER_VALUES
+
+    table = Table.create(
+        h5file.create_group("t"),
+        [ListColumnSpec(name="xs", values=LeafValuesSpec(dtype=dtype))],
+    )
+    group = table["xs"].group
+    assert group[MEMBER_VALUES].id.get_create_plist().fill_value_defined() == 2
+    del group[MEMBER_VALUES]
+    create_column_dataset(group, MEMBER_VALUES, dtype, fill_value=None)
+    assert group[MEMBER_VALUES].id.get_create_plist().fill_value_defined() != 2
+    return table
+
+
+@pytest.mark.parametrize(
+    ("label", "dtype", "value"),
+    [("string", np.dtype("S4"), "ab"), ("numeric", np.dtype("f8"), 1.0)],
+)
+def test_a_null_element_needs_a_leaf_fill_value(
+    h5file: h5py.File, label: str, dtype: Any, value: Any
+) -> None:
+    # A fixed-length string leaf used to substitute empty bytes here instead of
+    # raising. With no fill value to compare against, that element reads back as
+    # an empty string that is *present* — the one thing writing None must not do.
+    table = _leaf_without_a_fill(h5file, dtype)
+    with pytest.raises(SchemaError, match="requires the VALUES dataset"):
+        table.append({"xs": [[value, None]]})
+
+
+@pytest.mark.parametrize(
+    ("dtype", "values"),
+    [(np.dtype("S4"), ["ab", "cd"]), (np.dtype("f8"), [1.0, 2.0])],
+)
+def test_a_fill_less_leaf_still_takes_elements_that_are_present(
+    h5file: h5py.File, dtype: Any, values: Any
+) -> None:
+    # Only the null is refused; the column is otherwise perfectly usable.
+    table = _leaf_without_a_fill(h5file, dtype)
+    table.append({"xs": [values]})
+    assert table.nrows == 1
+
+
+def test_a_string_leaf_with_a_fill_still_stores_missing_elements(
+    h5file: h5py.File,
+) -> None:
+    # The ordinary path: h5col gives a string leaf the recommended fill, and a
+    # None element reads back as missing rather than as an empty string.
+    table = Table.create(
+        h5file.create_group("t"),
+        [
+            ListColumnSpec(
+                name="xs", values=LeafValuesSpec(dtype=np.dtype("S4"), fill_value=b"?")
+            )
+        ],
+    )
+    table.append({"xs": [["ab", None]]})
+    table.validate(deep=True)
+    assert table["xs"].read() == [["ab", None]]

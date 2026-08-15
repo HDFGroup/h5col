@@ -485,9 +485,8 @@ def _encode_leaf(ds: Any, entries: list[Any]) -> _LeafData:
         nothing is written to it here.
     entries:
         The elements to encode. ``None`` means a missing element and becomes
-        the dataset's fill value. It is rejected for a boolean leaf, and for
-        any other leaf that declares no fill value — except a fixed-length
-        string leaf, which falls back to empty bytes.
+        the dataset's fill value, so a leaf declaring none rejects it — as does
+        a boolean leaf, which the convention forbids a fill value.
     """
     dtype = ds.dtype
     if is_bool_dtype(dtype):
@@ -495,17 +494,20 @@ def _encode_leaf(ds: Any, entries: list[Any]) -> _LeafData:
             raise SchemaError("a boolean list element cannot be missing (None)")
         arr = encode_bool(entries).astype(np.bool_) if entries else np.empty(0, bool)
         return _LeafData(arr)
+    # One check for every non-boolean leaf. A fixed-length string leaf used to
+    # fall back to empty bytes here, which is a real value rather than a marker:
+    # with no fill value to compare against, the element would read back as an
+    # empty string that is present, not as the missing one it was written for.
     has_fill = ds.id.get_create_plist().fill_value_defined() == 2
-    if FixedString.is_fixed_string(dtype):
-        fs = FixedString.from_dtype(dtype)
-        fill_str = ds.fillvalue if has_fill else b""
-        vals = [fill_str if v is None else v for v in entries]
-        return _LeafData(fs.encode(vals) if vals else np.empty(0, dtype=dtype))
     if any(v is None for v in entries) and not has_fill:
         raise SchemaError(
             "a missing (None) leaf element requires the VALUES dataset to declare "
             "a fill value"
         )
+    if FixedString.is_fixed_string(dtype):
+        fs = FixedString.from_dtype(dtype)
+        vals = [ds.fillvalue if v is None else v for v in entries]
+        return _LeafData(fs.encode(vals) if vals else np.empty(0, dtype=dtype))
     arr = np.empty(len(entries), dtype=dtype)
     fillv = np.asarray(ds.fillvalue, dtype=dtype) if has_fill else None
     for i, v in enumerate(entries):
