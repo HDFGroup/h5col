@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -56,6 +57,83 @@ def _check_version_directives() -> None:
         )
 
 
+#: numpydoc section headings, which napoleon rewrites into reST. Anything left
+#: below one of them belongs to that section.
+_NUMPYDOC_SECTIONS = frozenset(
+    {
+        "Parameters",
+        "Other Parameters",
+        "Returns",
+        "Yields",
+        "Raises",
+        "Warns",
+        "Warnings",
+        "Attributes",
+        "See Also",
+        "Notes",
+        "References",
+        "Examples",
+    }
+)
+
+
+def _first_section(lines: list[str]) -> int | None:
+    """Index of a docstring's first numpydoc section heading, or None.
+
+    A section is a heading line followed by a row of dashes, which is what
+    separates one from an ordinary paragraph that happens to say "Notes".
+
+    Parameters
+    ----------
+    lines:
+        The docstring, already split into lines.
+    """
+    for i in range(len(lines) - 1):
+        underline = lines[i + 1].strip()
+        if lines[i].strip() in _NUMPYDOC_SECTIONS and set(underline) == {"-"}:
+            return i
+    return None
+
+
+def _check_version_directive_placement() -> None:
+    """Fail the build on a ``versionadded`` written below a numpydoc section.
+
+    Napoleon rewrites ``Parameters`` and its siblings into a reST field list,
+    taking everything indented beneath the heading with it. A directive placed
+    after the parameters is therefore read as *another parameter*: the page
+    grows an entry named ``versionadded:`` of type ``..``, described as the
+    version number, sitting at the same indentation as the real arguments.
+
+    Nothing else catches this. The directive is valid reST wherever it sits, so
+    the build stays silent under ``-W`` and only the rendered page shows it.
+    """
+    bad: list[str] = []
+    for path in sorted((_REPO / "src" / "h5col").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+            ):
+                continue
+            doc = ast.get_docstring(node)
+            if doc is None or "version" not in doc:
+                continue
+            lines = doc.splitlines()
+            section = _first_section(lines)
+            if section is None:
+                continue
+            for i, line in enumerate(lines):
+                if i > section and re.search(r"\.\.\s+version(?:added|changed)::", line):
+                    owner = getattr(node, "name", "<module>")
+                    bad.append(f"{path.name}:{owner} — below its {lines[section].strip()}")
+    if bad:
+        raise RuntimeError(
+            "version directives sit below a numpydoc section, where napoleon "
+            "reads them as one more parameter; move each above the first "
+            "section:\n  " + "\n  ".join(bad)
+        )
+
+
 def _check_pinned_install_version(latest: str) -> None:
     """Fail the build if the installation page pins a stale version.
 
@@ -83,6 +161,7 @@ release = h5col.__version__
 latest_release = _latest_release()
 _check_pinned_install_version(latest_release)
 _check_version_directives()
+_check_version_directive_placement()
 
 # -- General -----------------------------------------------------------------
 extensions = [
